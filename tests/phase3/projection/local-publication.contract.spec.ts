@@ -9,13 +9,13 @@ import { validatePageProjection } from '@/collections/PageProjections'
 
 const HASH = `sha256:v1:${'a'.repeat(64)}`
 
-const artifact = (id: string, sourceID: string, text: string) => ({
+const artifact = (id: string, sourceID: string, text: string, mediaType: 'image' | 'video' = 'image') => ({
   id,
   sourceID,
   sourceVersion: HASH,
   title: `Prompt ${id.slice(-4)}`,
   text,
-  mediaType: 'image' as const,
+  mediaType,
   observedAt: '2026-08-26T00:00:00.000Z',
 })
 
@@ -24,13 +24,56 @@ describe('local internal projection publication', () => {
     locale: 'en',
     publishVersion: 1,
     artifacts: [
-      artifact('00000000-0000-4000-8000-000000000101', '00000000-0000-4000-8000-000000000201', 'Cinematic product image, soft daylight.'),
-      artifact('00000000-0000-4000-8000-000000000102', '00000000-0000-4000-8000-000000000202', 'Anime city at dusk.'),
+      {
+        ...artifact('00000000-0000-4000-8000-000000000101', '00000000-0000-4000-8000-000000000201', 'Cinematic product image, soft daylight.'),
+        entityRefs: [
+          { id: '00000000-0000-4000-8000-000000000401', kind: 'model' as const, stableKey: 'model:higgsfield', label: 'Higgsfield', promotionState: 'reviewed' as const },
+          { id: '00000000-0000-4000-8000-000000000402', kind: 'use_case' as const, stableKey: 'use_case:product-showcase', label: 'Product showcase', promotionState: 'qualified' as const },
+          { id: '00000000-0000-4000-8000-000000000403', kind: 'style' as const, stableKey: 'style:cinematic', label: 'Cinematic', promotionState: 'candidate' as const },
+        ],
+      },
+      {
+        ...artifact('00000000-0000-4000-8000-000000000102', '00000000-0000-4000-8000-000000000202', 'Anime city at dusk.', 'video'),
+        entityRefs: [{ id: '00000000-0000-4000-8000-000000000401', kind: 'model' as const, stableKey: 'model:higgsfield', label: 'Higgsfield', promotionState: 'reviewed' as const }],
+      },
     ],
   })
 
-  it('materializes Hub, Gallery, Entity, and Detail pages as noindex projections', () => {
-    expect(projections.map((projection) => projection.family)).toEqual(['hub', 'gallery', 'entity', 'detail'])
+  it('materializes every real internal route family from imported artifacts without candidates', () => {
+    expect(projections.map((projection) => projection.family)).toEqual(['hub', 'gallery', 'gallery', 'entity', 'entity', 'detail', 'detail'])
+    expect(projections.map((projection) => projection.page.route)).toEqual([
+      '/en/prompts',
+      '/en/prompts/image',
+      '/en/prompts/video',
+      '/en/prompts/models/higgsfield',
+      '/en/prompts/use-cases/product-showcase',
+      expect.stringMatching(/^\/en\/prompts\/prompt-0101-[0-9a-f-]+$/),
+      expect.stringMatching(/^\/en\/prompts\/prompt-0102-[0-9a-f-]+$/),
+    ])
+    expect(projections.map((projection) => projection.page.route)).not.toContain('/en/prompts/styles/cinematic')
+    expect(projections.find((projection) => projection.family === 'hub')?.slots.map((slot) => slot.slot_key)).toEqual([
+      'featured', 'trending', 'tasks', 'camera_motion', 'models', 'styles', 'collections', 'creators',
+      'outputs', 'use_cases', 'techniques',
+    ])
+    expect(projections.filter((projection) => projection.family === 'gallery').every((projection) =>
+      ['use_cases', 'styles', 'subjects', 'featured', 'models', 'subject_band', 'residual', 'related']
+        .every((key) => projection.slots.some((slot) => slot.slot_key === key)))).toBe(true)
+    expect(projections.filter((projection) => projection.family === 'entity').every((projection) =>
+      ['top_prompts', 'all_prompts', 'facets', 'variables', 'creators', 'evidence', 'faq', 'related']
+        .every((key) => projection.slots.some((slot) => slot.slot_key === key)))).toBe(true)
+    expect(projections.find((projection) => projection.family === 'hub')?.slots.find((slot) => slot.slot_key === 'featured')?.items)
+      .toHaveLength(2)
+    expect(projections.find((projection) => projection.page.route === '/en/prompts/image')?.slots.find((slot) => slot.slot_key === 'featured')?.items)
+      .toHaveLength(1)
+    const firstHubCard = projections.find((projection) => projection.family === 'hub')?.slots.find((slot) => slot.slot_key === 'featured')?.items[0]
+    expect(firstHubCard).toMatchObject({
+      tags: expect.arrayContaining([
+        expect.objectContaining({ node_ref: 'output:image', link_policy: 'filter_state', target_indexability: 'noindex' }),
+        expect.objectContaining({ node_ref: 'model:higgsfield', link_policy: 'filter_state', target_indexability: 'noindex' }),
+        expect.objectContaining({ node_ref: 'use_case:product-showcase', link_policy: 'filter_state', target_indexability: 'noindex' }),
+      ]),
+    })
+    expect(JSON.stringify(firstHubCard)).not.toContain('style:cinematic')
     for (const projection of projections) {
       expect(pageProjectionSchema.parse(projection).page.index_state).toBe('discoverable_noindex')
       expect(JSON.stringify(projection)).not.toContain('pbs.twimg.com')
@@ -40,9 +83,18 @@ describe('local internal projection publication', () => {
 
   it('binds every route to the exact immutable projection for one publication version', () => {
     const bindings = buildPublicationProjectionBindings({ publishVersion: 1, projections })
-    expect(bindings).toHaveLength(4)
-    expect(new Set(bindings.map((binding) => binding.route)).size).toBe(4)
+    expect(bindings).toHaveLength(7)
+    expect(new Set(bindings.map((binding) => binding.route)).size).toBe(7)
     expect(bindings.every((binding) => binding.publish_version === 1 && binding.internal_noindex)).toBe(true)
+  })
+
+  it('omits an empty gallery and deduplicates repeated artifact evidence into one detail route', () => {
+    const imageOnly = artifact('00000000-0000-4000-8000-000000000103', '00000000-0000-4000-8000-000000000203', 'Only image evidence.')
+    const result = buildInternalNoindexProjections({ locale: 'en', publishVersion: 2, artifacts: [imageOnly, imageOnly] })
+
+    expect(result.filter((projection) => projection.family === 'gallery').map((projection) => projection.page.route)).toEqual(['/en/prompts/image'])
+    expect(result.filter((projection) => projection.family === 'detail')).toHaveLength(1)
+    expect(new Set(result.map((projection) => projection.page.route)).size).toBe(result.length)
   })
 
   it('accepts released projection bytes only through the internal publication capability', () => {

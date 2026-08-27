@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 
 import type { ApplicationLocale } from '@/contracts/locale'
-import { pageProjectionSchema, type PageProjection, type ProjectedPromptCard } from '@/contracts/projection'
+import { pageProjectionSchema, type PageProjection, type ProjectedNodeItem, type ProjectedPromptCard, type ProjectedSlot } from '@/contracts/projection'
 
 const RENDERER_VERSION = 'local-internal-projector-v1'
 const schemaHash = `sha256:v1:${createHash('sha256').update('page-projection-schema-v1').digest('hex')}`
@@ -15,6 +15,19 @@ export type ImportedProjectionArtifact = Readonly<{
   mediaType: 'image' | 'video' | 'unresolved'
   observedAt: string
   canonicalURL?: string
+  entityRefs?: readonly ImportedProjectionEntity[]
+}>
+
+/**
+ * Entity routes are permitted only for existing, reviewed taxonomy records.
+ * We deliberately do not derive taxonomy from prompt prose in this publisher.
+ */
+export type ImportedProjectionEntity = Readonly<{
+  id: string
+  kind: 'model' | 'use_case' | 'style'
+  stableKey: string
+  label: string
+  promotionState: 'candidate' | 'reviewed' | 'qualified' | 'retired'
 }>
 
 export type InternalProjectionInput = Readonly<{
@@ -39,19 +52,145 @@ const slug = (value: string): string => {
 
 const canonical = (locale: ApplicationLocale, path: string): string => `https://internal.local${path.replace(`/${locale}`, '')}`
 
+const reviewedEntityRefs = (artifact: ImportedProjectionArtifact): readonly ImportedProjectionEntity[] => Object.freeze(
+  [...(artifact.entityRefs ?? [])]
+    .filter((entity) => entity.promotionState === 'reviewed' || entity.promotionState === 'qualified')
+    .sort((left, right) => left.stableKey.localeCompare(right.stableKey, 'en-US')),
+)
+
+const taxonomyNode = (entity: ImportedProjectionEntity, locale: ApplicationLocale): ProjectedNodeItem => ({
+  node_ref: entity.stableKey,
+  edge_ref: null,
+  evidence_state: entity.promotionState === 'qualified' ? 'qualified' : 'reviewed',
+  link_policy: 'filter_state',
+  href: `/${locale}/prompts?facet=${encodeURIComponent(entity.stableKey)}`,
+  render_target: 'filter',
+  target_indexability: 'noindex',
+})
+
+const outputNode = (mediaType: ImportedProjectionArtifact['mediaType'], locale: ApplicationLocale): ProjectedNodeItem => ({
+  node_ref: `output:${mediaType}`,
+  edge_ref: null,
+  evidence_state: 'reviewed',
+  link_policy: 'filter_state',
+  href: `/${locale}/prompts?output=${mediaType}`,
+  render_target: 'filter',
+  target_indexability: 'noindex',
+})
+
+const uniqueNodes = (nodes: readonly ProjectedNodeItem[]): readonly ProjectedNodeItem[] => Object.freeze(
+  [...new Map(nodes.map((node) => [node.node_ref, node])).values()].sort((left, right) => left.node_ref.localeCompare(right.node_ref, 'en-US')),
+)
+
+const outputNodesFor = (artifacts: readonly ImportedProjectionArtifact[], locale: ApplicationLocale): readonly ProjectedNodeItem[] =>
+  uniqueNodes(artifacts.map((artifact) => outputNode(artifact.mediaType, locale)))
+
+const taxonomyNodesFor = (artifacts: readonly ImportedProjectionArtifact[], locale: ApplicationLocale, kinds: readonly ImportedProjectionEntity['kind'][]): readonly ProjectedNodeItem[] =>
+  uniqueNodes(artifacts.flatMap((artifact) =>
+    reviewedEntityRefs(artifact).filter((entity) => kinds.includes(entity.kind)).map((entity) => taxonomyNode(entity, locale))))
+
 const card = (artifact: ImportedProjectionArtifact, locale: ApplicationLocale): ProjectedPromptCard => {
-  const routeID = stable(`detail-route:${artifact.id}:${artifact.sourceVersion}`)
+  const routeID = stable(`detail-route:${artifact.id}`)
   return {
     prompt_ref: { type: 'artifact', id: artifact.id },
     title: artifact.title,
     summary: artifact.text.slice(0, 240),
-    tags: [],
+    tags: [
+      outputNode(artifact.mediaType, locale),
+      ...reviewedEntityRefs(artifact).map((entity) => taxonomyNode(entity, locale)),
+    ],
     evidence_state: 'reviewed',
     link_policy: 'filter_state',
     href: `/${locale}/prompts/${slug(artifact.title)}-${routeID}`,
     render_target: 'filter',
     target_indexability: 'noindex',
   }
+}
+
+const promptSlot = (slotKey: string, artifacts: readonly ImportedProjectionArtifact[], locale: ApplicationLocale, limit = 12): ProjectedSlot => ({
+  slot_key: slotKey,
+  renderer: 'prompt_shelf',
+  source_mode: 'content_envelope',
+  items: artifacts.slice(0, limit).map((artifact) => card(artifact, locale)),
+})
+
+const nodeSlot = (slotKey: string, items: readonly ProjectedNodeItem[]): ProjectedSlot => ({
+  slot_key: slotKey,
+  renderer: 'facet_rail',
+  source_mode: 'content_envelope',
+  items: [...items],
+})
+
+const emptySlot = (slotKey: string): ProjectedSlot => nodeSlot(slotKey, [])
+
+const artifactsForEntityKind = (artifacts: readonly ImportedProjectionArtifact[], kind: ImportedProjectionEntity['kind']): readonly ImportedProjectionArtifact[] =>
+  artifacts.filter((artifact) => reviewedEntityRefs(artifact).some((entity) => entity.kind === kind))
+
+const compare = (left: string, right: string): number => left.localeCompare(right, 'en-US')
+
+const equivalentArtifact = (left: ImportedProjectionArtifact, right: ImportedProjectionArtifact): boolean =>
+  JSON.stringify(left) === JSON.stringify(right)
+
+/** Payload stable IDs represent a durable artifact. Repeated equal input may
+ * occur through relationship fan-out; conflicting bytes are unsafe to publish. */
+const uniqueArtifacts = (artifacts: readonly ImportedProjectionArtifact[]): readonly ImportedProjectionArtifact[] => {
+  const byID = new Map<string, ImportedProjectionArtifact>()
+  for (const artifact of artifacts) {
+    const existing = byID.get(artifact.id)
+    if (existing !== undefined && !equivalentArtifact(existing, artifact))
+      throw new Error(`conflicting imported projection artifact ${artifact.id}`)
+    if (existing === undefined) byID.set(artifact.id, artifact)
+  }
+  return Object.freeze([...byID.values()].sort((left, right) => compare(left.id, right.id)))
+}
+
+const entitySlug = (entity: ImportedProjectionEntity): string | undefined => {
+  const prefix = `${entity.kind}:`
+  const suffix = entity.stableKey.startsWith(prefix) ? entity.stableKey.slice(prefix.length) : ''
+  return /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(suffix) ? suffix : undefined
+}
+
+type EntityGroup = Readonly<{
+  entity: ImportedProjectionEntity
+  slug: string
+  artifacts: readonly ImportedProjectionArtifact[]
+}>
+
+const groupedEntities = (artifacts: readonly ImportedProjectionArtifact[]): readonly EntityGroup[] => {
+  const groups = new Map<string, { entity: ImportedProjectionEntity; slug: string; artifacts: Map<string, ImportedProjectionArtifact> }>()
+  for (const artifact of artifacts) for (const entity of artifact.entityRefs ?? []) {
+    if (entity.promotionState !== 'reviewed' && entity.promotionState !== 'qualified') continue
+    const slugValue = entitySlug(entity)
+    if (slugValue === undefined) continue
+    const key = `${entity.kind}\u0000${entity.stableKey}`
+    const existing = groups.get(key)
+    if (existing === undefined) {
+      groups.set(key, { entity, slug: slugValue, artifacts: new Map([[artifact.id, artifact]]) })
+      continue
+    }
+    if (existing.entity.label !== entity.label || existing.entity.id !== entity.id)
+      throw new Error(`conflicting imported projection entity ${entity.stableKey}`)
+    existing.artifacts.set(artifact.id, artifact)
+  }
+  const familyOrder: Record<ImportedProjectionEntity['kind'], number> = { model: 0, use_case: 1, style: 2 }
+  return Object.freeze([...groups.values()]
+    .map((group): EntityGroup => Object.freeze({ entity: group.entity, slug: group.slug, artifacts: Object.freeze([...group.artifacts.values()].sort((left, right) => compare(left.id, right.id))) }))
+    .sort((left, right) => familyOrder[left.entity.kind] - familyOrder[right.entity.kind] || compare(left.slug, right.slug)))
+}
+
+const entityRouteSegment: Record<ImportedProjectionEntity['kind'], string> = {
+  model: 'models',
+  use_case: 'use-cases',
+  style: 'styles',
+}
+
+const assertUniqueRoutes = (projections: readonly PageProjection[]): readonly PageProjection[] => {
+  const routes = new Set<string>()
+  for (const page of projections) {
+    if (routes.has(page.page.route)) throw new Error(`duplicate internal projection route ${page.page.route}`)
+    routes.add(page.page.route)
+  }
+  return Object.freeze([...projections])
 }
 
 const base = (input: InternalProjectionInput, pageID: string, route: string, title: string, description: string, sourceRefs: readonly string[], observedAt: string) => ({
@@ -102,12 +241,10 @@ const projection = (input: InternalProjectionInput, family: PageProjection['fami
  */
 export const buildInternalNoindexProjections = (input: InternalProjectionInput): readonly PageProjection[] => {
   if (!Number.isSafeInteger(input.publishVersion) || input.publishVersion < 1) throw new Error('publishVersion must be a positive integer')
-  const artifacts = [...input.artifacts].sort((left, right) => left.id.localeCompare(right.id))
+  const artifacts = uniqueArtifacts(input.artifacts)
   if (artifacts.length === 0) throw new Error('at least one imported prompt artifact is required')
-  const first = artifacts[0]!
   const sourceRefs = [...new Set(artifacts.map((artifact) => artifact.sourceID))]
   const observedAt = artifacts.map((artifact) => artifact.observedAt).sort().at(-1)!
-  const cards = artifacts.map((artifact) => card(artifact, input.locale))
   const hubRoute = `/${input.locale}/prompts`
   const hubID = stable(`hub:${input.locale}`)
   const hub = {
@@ -118,75 +255,121 @@ export const buildInternalNoindexProjections = (input: InternalProjectionInput):
     featured_module_ids: [],
     diversity_rule_version: 'local-internal-v1',
   }
-  const galleryRoute = `/${input.locale}/prompts/image`
-  const galleryID = stable(`gallery:image:${input.locale}`)
-  const gallery = {
-    ...base(input, galleryID, galleryRoute, 'Image Prompt Gallery', `${artifacts.length} internal image prompt cards.`, sourceRefs, observedAt),
-    page_type: 'gallery' as const,
-    media_type: 'image' as const,
-    page: 1,
-    page_size: Math.min(100, Math.max(1, artifacts.length)),
-    total_items: artifacts.length,
-    filter_state: { output: 'image' },
-    next_page: null,
-    previous_page: null,
+  const modelArtifacts = artifactsForEntityKind(artifacts, 'model')
+  const useCaseArtifacts = artifactsForEntityKind(artifacts, 'use_case')
+  const styleArtifacts = artifactsForEntityKind(artifacts, 'style')
+  const projections: PageProjection[] = [projection(input, 'hub', hub, [
+    promptSlot('featured', artifacts, input.locale),
+    emptySlot('trending'),
+    promptSlot('tasks', useCaseArtifacts, input.locale),
+    emptySlot('camera_motion'),
+    promptSlot('models', modelArtifacts, input.locale),
+    promptSlot('styles', styleArtifacts, input.locale),
+    emptySlot('collections'),
+    emptySlot('creators'),
+    nodeSlot('outputs', outputNodesFor(artifacts, input.locale)),
+    nodeSlot('use_cases', taxonomyNodesFor(artifacts, input.locale, ['use_case'])),
+    emptySlot('techniques'),
+  ])]
+
+  for (const mediaType of ['image', 'video'] as const) {
+    const galleryArtifacts = artifacts.filter((artifact) => artifact.mediaType === mediaType)
+    if (galleryArtifacts.length === 0) continue
+    const galleryRoute = `/${input.locale}/prompts/${mediaType}`
+    const galleryID = stable(`gallery:${mediaType}:${input.locale}`)
+    const galleryPageSize = Math.min(100, galleryArtifacts.length)
+    const gallery = {
+      ...base(input, galleryID, galleryRoute, `${mediaType === 'image' ? 'Image' : 'Video'} Prompt Gallery`, `${galleryArtifacts.length} internal ${mediaType} prompt cards.`, [...new Set(galleryArtifacts.map((artifact) => artifact.sourceID))], galleryArtifacts.map((artifact) => artifact.observedAt).sort().at(-1)!),
+      page_type: 'gallery' as const,
+      media_type: mediaType,
+      page: 1,
+      page_size: galleryPageSize,
+      total_items: galleryArtifacts.length,
+      filter_state: { output: mediaType },
+      next_page: null,
+      previous_page: null,
+    }
+    projections.push(projection(input, 'gallery', gallery, [
+      nodeSlot('use_cases', taxonomyNodesFor(galleryArtifacts, input.locale, ['use_case'])),
+      nodeSlot('styles', taxonomyNodesFor(galleryArtifacts, input.locale, ['style'])),
+      emptySlot('subjects'),
+      promptSlot('featured', galleryArtifacts, input.locale, galleryPageSize),
+      promptSlot('models', artifactsForEntityKind(galleryArtifacts, 'model'), input.locale, galleryPageSize),
+      emptySlot('subject_band'),
+      emptySlot('residual'),
+      emptySlot('related'),
+    ]))
   }
-  const entityRoute = `/${input.locale}/prompts/models/higgsfield`
-  const entityID = stable(`entity:model:higgsfield:${input.locale}`)
-  const entity = {
-    ...base(input, entityID, entityRoute, 'Higgsfield Prompt Entity', 'Internal entity grouping from imported Higgsfield prompt artifacts.', sourceRefs, observedAt),
-    page_type: 'entity' as const,
-    entity_kind: 'model' as const,
-    entity_slug: 'higgsfield',
-    qualification: {
-      qualified: false,
-      reason_codes: ['internal_noindex_publication'],
-      usable_items: artifacts.length,
-      independent_creators: 0,
-      sibling_overlap_ratio: 1,
-      demand_evidence_ref: null,
-      keyword_owner: null,
-    },
-    item_count: artifacts.length,
-    creator_count: 0,
+
+  for (const group of groupedEntities(artifacts)) {
+    const entityRoute = `/${input.locale}/prompts/${entityRouteSegment[group.entity.kind]}/${group.slug}`
+    const entityID = stable(`entity:${group.entity.kind}:${group.entity.stableKey}:${input.locale}`)
+    const groupSourceRefs = [...new Set(group.artifacts.map((artifact) => artifact.sourceID))]
+    const groupObservedAt = group.artifacts.map((artifact) => artifact.observedAt).sort().at(-1)!
+    const entity = {
+      ...base(input, entityID, entityRoute, `${group.entity.label} Prompts`, `Internal ${group.entity.kind.replace('_', ' ')} grouping from imported prompt artifacts.`, groupSourceRefs, groupObservedAt),
+      page_type: 'entity' as const,
+      entity_kind: group.entity.kind,
+      entity_slug: group.slug,
+      qualification: {
+        qualified: false,
+        reason_codes: ['internal_noindex_publication'],
+        usable_items: group.artifacts.length,
+        independent_creators: 0,
+        sibling_overlap_ratio: 1,
+        demand_evidence_ref: null,
+        keyword_owner: null,
+      },
+      item_count: group.artifacts.length,
+      creator_count: 0,
+    }
+    projections.push(projection(input, 'entity', entity, [
+      promptSlot('top_prompts', group.artifacts, input.locale, 12),
+      promptSlot('all_prompts', group.artifacts, input.locale, 100),
+      nodeSlot('facets', [taxonomyNode(group.entity, input.locale)]),
+      emptySlot('variables'),
+      emptySlot('creators'),
+      emptySlot('evidence'),
+      emptySlot('faq'),
+      emptySlot('related'),
+    ]))
   }
-  const detailRouteID = stable(`detail-route:${first.id}:${first.sourceVersion}`)
-  const detailPageID = stable(`detail-page:${first.id}:${input.locale}:${first.sourceVersion}`)
-  const detailRoute = `/${input.locale}/prompts/${slug(first.title)}-${detailRouteID}`
-  const unavailable = { state: 'unavailable' as const, provenance: 'unavailable' as const, sourceRefs: [first.sourceID] }
-  const detail = {
-    ...base(input, detailPageID, detailRoute, first.title, first.text.slice(0, 320), [first.sourceID], first.observedAt),
-    page_type: 'detail' as const,
-    detail: {
-      pageId: detailPageID,
-      routeId: detailRouteID,
-      artifactId: first.id,
-      locale: input.locale,
-      slug: slug(first.title),
-      title: first.title,
-      description: first.text.slice(0, 320),
-      robots: 'noindex,nofollow,noarchive,nosnippet' as const,
-      sourceHash: first.sourceVersion,
-      originalTextBytesHash: hash(first.text),
-      generatedFillerCount: 0 as const,
-      questions: [
-        { id: 'identity' as const, state: 'present' as const, provenance: 'explicit' as const, sourceRefs: [first.sourceID], content: { label: first.title, artifactKind: 'prompt' } },
-        { id: 'outcome' as const, state: 'present' as const, provenance: 'explicit' as const, sourceRefs: [first.sourceID], content: { summary: `Imported ${first.mediaType} prompt evidence.`, medium: first.mediaType } },
-        { id: 'prompt' as const, state: 'present' as const, provenance: 'explicit' as const, sourceRefs: [first.sourceID], content: { originalText: first.text, originalLanguage: 'en', copyDefault: 'original' as const } },
-        { id: 'inputs' as const, ...unavailable, content: { required: [], optional: [] } },
-        { id: 'parameters' as const, ...unavailable, content: { items: [] } },
-        { id: 'examples' as const, ...unavailable, content: { mediaRefs: [] } },
-        { id: 'workflow' as const, ...unavailable, content: { steps: [] } },
-        { id: 'variations' as const, ...unavailable, content: { artifactRefs: [] } },
-        { id: 'source_signals' as const, state: 'present' as const, provenance: 'explicit' as const, sourceRefs: [first.sourceID], content: { sourceUrl: first.canonicalURL ?? `https://internal.local/sources/${first.sourceID}`, observedAt: first.observedAt, likes: null, bookmarks: null, views: null } },
-        { id: 'actions' as const, state: 'present' as const, provenance: 'explicit' as const, sourceRefs: [first.sourceID], content: { copyPrompt: true, productActionId: null } },
-      ],
-    },
+
+  for (const artifact of artifacts) {
+    const detailRouteID = stable(`detail-route:${artifact.id}`)
+    const detailPageID = stable(`detail-page:${artifact.id}:${input.locale}`)
+    const detailRoute = `/${input.locale}/prompts/${slug(artifact.title)}-${detailRouteID}`
+    const unavailable = { state: 'unavailable' as const, provenance: 'unavailable' as const, sourceRefs: [artifact.sourceID] }
+    const detail = {
+      ...base(input, detailPageID, detailRoute, artifact.title, artifact.text.slice(0, 320), [artifact.sourceID], artifact.observedAt),
+      page_type: 'detail' as const,
+      detail: {
+        pageId: detailPageID,
+        routeId: detailRouteID,
+        artifactId: artifact.id,
+        locale: input.locale,
+        slug: slug(artifact.title),
+        title: artifact.title,
+        description: artifact.text.slice(0, 320),
+        robots: 'noindex,nofollow,noarchive,nosnippet' as const,
+        sourceHash: artifact.sourceVersion,
+        originalTextBytesHash: hash(artifact.text),
+        generatedFillerCount: 0 as const,
+        questions: [
+          { id: 'identity' as const, state: 'present' as const, provenance: 'explicit' as const, sourceRefs: [artifact.sourceID], content: { label: artifact.title, artifactKind: 'prompt' } },
+          { id: 'outcome' as const, state: 'present' as const, provenance: 'explicit' as const, sourceRefs: [artifact.sourceID], content: { summary: `Imported ${artifact.mediaType} prompt evidence.`, medium: artifact.mediaType } },
+          { id: 'prompt' as const, state: 'present' as const, provenance: 'explicit' as const, sourceRefs: [artifact.sourceID], content: { originalText: artifact.text, originalLanguage: 'en', copyDefault: 'original' as const } },
+          { id: 'inputs' as const, ...unavailable, content: { required: [], optional: [] } },
+          { id: 'parameters' as const, ...unavailable, content: { items: [] } },
+          { id: 'examples' as const, ...unavailable, content: { mediaRefs: [] } },
+          { id: 'workflow' as const, ...unavailable, content: { steps: [] } },
+          { id: 'variations' as const, ...unavailable, content: { artifactRefs: [] } },
+          { id: 'source_signals' as const, state: 'present' as const, provenance: 'explicit' as const, sourceRefs: [artifact.sourceID], content: { sourceUrl: artifact.canonicalURL ?? `https://internal.local/sources/${artifact.sourceID}`, observedAt: artifact.observedAt, likes: null, bookmarks: null, views: null } },
+          { id: 'actions' as const, state: 'present' as const, provenance: 'explicit' as const, sourceRefs: [artifact.sourceID], content: { copyPrompt: true, productActionId: null } },
+        ],
+      },
+    }
+    projections.push(projection(input, 'detail', detail, [{ slot_key: 'prompt', renderer: 'prompt', source_mode: 'content_envelope', items: [card(artifact, input.locale)] }]))
   }
-  return Object.freeze([
-    projection(input, 'hub', hub, [{ slot_key: 'prompt_shelf', renderer: 'prompt_shelf', source_mode: 'content_envelope', items: cards }]),
-    projection(input, 'gallery', gallery, [{ slot_key: 'gallery', renderer: 'prompt_shelf', source_mode: 'content_envelope', items: cards }]),
-    projection(input, 'entity', entity, [{ slot_key: 'entity_prompts', renderer: 'prompt_shelf', source_mode: 'content_envelope', items: cards }]),
-    projection(input, 'detail', detail, [{ slot_key: 'prompt', renderer: 'prompt', source_mode: 'content_envelope', items: [cards[0]!] }]),
-  ])
+  return assertUniqueRoutes(projections)
 }

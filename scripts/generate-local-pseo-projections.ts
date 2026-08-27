@@ -5,7 +5,7 @@ import { pathToFileURL } from 'node:url'
 import { createUlid } from '../src/access/ulid'
 import { createWorkflowRunTransitionRequest } from '../src/collections/canonical-payload-contract'
 import { applicationLocaleSchema, type ApplicationLocale } from '../src/contracts/locale'
-import { buildInternalNoindexProjections, type ImportedProjectionArtifact } from '../src/page/local-internal-projector'
+import { buildInternalNoindexProjections, type ImportedProjectionArtifact, type ImportedProjectionEntity } from '../src/page/local-internal-projector'
 import { createInternalProjectionPublicationRequest } from '../src/publication/payload-projection-command'
 import { buildPublicationProjectionBindings } from '../src/publication/projection-bindings'
 
@@ -30,6 +30,34 @@ export type LocalProjectionPublicationResult = Readonly<{
 const hash = (value: string): string => `sha256:v1:${createHash('sha256').update(value, 'utf8').digest('hex')}`
 const asRecord = (value: unknown): PayloadDocument => typeof value === 'object' && value !== null ? value as PayloadDocument : {}
 const asID = (value: unknown): string | number | undefined => typeof value === 'string' || typeof value === 'number' ? value : undefined
+const records = (value: unknown): readonly PayloadDocument[] => Array.isArray(value) ? value.map(asRecord) : []
+
+/**
+ * Only already-reviewed taxonomy relationships may become an internal entity
+ * route. A raw prompt label, an unpopulated relationship, or a candidate node
+ * is not sufficient evidence for a route.
+ */
+const entityRefsFromPayloadDocument = (document: PayloadDocument): readonly ImportedProjectionEntity[] => {
+  const entities = new Map<string, ImportedProjectionEntity>()
+  for (const reference of [...records(document.model_refs), ...records(document.taxonomy_refs)]) {
+    const id = typeof reference.stable_id === 'string' ? reference.stable_id : undefined
+    const kind = reference.node_type
+    const stableKey = typeof reference.stable_key === 'string' ? reference.stable_key : undefined
+    const label = typeof reference.label === 'string' ? reference.label.trim() : ''
+    const promotionState = reference.promotion_state
+    if (!id || !stableKey || !label ||
+      (kind !== 'model' && kind !== 'use_case' && kind !== 'style') ||
+      (promotionState !== 'reviewed' && promotionState !== 'qualified') ||
+      !stableKey.startsWith(`${kind}:`)) continue
+    const entity: ImportedProjectionEntity = { id, kind, stableKey, label, promotionState }
+    const existing = entities.get(`${kind}\u0000${stableKey}`)
+    if (existing !== undefined && JSON.stringify(existing) !== JSON.stringify(entity))
+      throw new Error(`conflicting taxonomy entity relationship ${stableKey}`)
+    entities.set(`${kind}\u0000${stableKey}`, entity)
+  }
+  return Object.freeze([...entities.values()].sort((left, right) =>
+    left.kind.localeCompare(right.kind, 'en-US') || left.stableKey.localeCompare(right.stableKey, 'en-US')))
+}
 
 export const parseLocalProjectionPublishArgs = (argumentsAfterCommand = process.argv.slice(2)): LocalProjectionPublishArgs => {
   let locale: string = 'en'
@@ -50,7 +78,7 @@ export const parseLocalProjectionPublishArgs = (argumentsAfterCommand = process.
   return Object.freeze({ locale: parsedLocale.data })
 }
 
-const artifactsFromPayload = async (payload: PayloadLocalAPI, locale: ApplicationLocale): Promise<readonly ImportedProjectionArtifact[]> => {
+export const artifactsFromPayload = async (payload: PayloadLocalAPI, locale: ApplicationLocale): Promise<readonly ImportedProjectionArtifact[]> => {
   const result = await payload.find({
     collection: 'prompt-artifacts', depth: 1, limit: 10_000, overrideAccess: true,
     where: { kind: { equals: 'prompt' } }, sort: 'id',
@@ -75,6 +103,7 @@ const artifactsFromPayload = async (payload: PayloadLocalAPI, locale: Applicatio
       mediaType: mediaType === 'video' || mediaType === 'unresolved' ? mediaType : 'image',
       observedAt,
       canonicalURL: typeof source.canonical_url === 'string' ? source.canonical_url : undefined,
+      entityRefs: entityRefsFromPayloadDocument(document),
     }]
   })
   if (artifacts.length === 0) throw new Error(`no imported prompt artifacts are available for ${locale} projection publication`)
