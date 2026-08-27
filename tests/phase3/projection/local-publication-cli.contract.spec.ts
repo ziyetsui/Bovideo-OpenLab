@@ -483,6 +483,8 @@ describe('local projection publication command', () => {
           { id: 4, provider: 'x', visibility: 'private_evidence', sensitive_content_state: 'unknown', rights_state: 'metadata_only', remote_url: 'https://video.twimg.com/ext_tw_video/reviewed.mp4', thumbnail_url: 'https://pbs.twimg.com/media/reviewed.jpg', source_ref: { canonical_url: 'https://x.com/example/status/4' } },
           { id: 5, provider: 'x', visibility: 'private_evidence', sensitive_content_state: 'unknown', rights_state: 'metadata_only', remote_url: 'https://video.twimg.com/ext_tw_video/unreviewed.mp4', thumbnail_url: 'https://pbs.twimg.com/media/reviewed.jpg', source_ref: { canonical_url: 'https://x.com/example/status/5' } },
           { id: 6, provider: 'x', visibility: 'private_evidence', sensitive_content_state: 'unknown', rights_state: 'metadata_only', remote_url: 'https://video.twimg.com/ext_tw_video/reviewed.mp4', thumbnail_url: null, source_ref: { canonical_url: 'https://x.com/example/status/6' } },
+          { id: 7, provider: 'x', media_type: 'image', visibility: 'private_evidence', sensitive_content_state: 'unknown', rights_state: 'metadata_only', remote_url: 'https://pbs.twimg.com/media/reviewed-image.jpg', thumbnail_url: null, source_ref: { canonical_url: 'https://x.com/example/status/7' } },
+          { id: 8, provider: 'x', media_type: 'image', visibility: 'private_evidence', sensitive_content_state: 'unknown', rights_state: 'metadata_only', remote_url: 'https://pbs.twimg.com/media/unreviewed-image.jpg', thumbnail_url: null, source_ref: { canonical_url: 'https://x.com/example/status/8' } },
         ] }
       },
       async update(input: Record<string, unknown>) { updates.push(input); return input },
@@ -494,22 +496,26 @@ describe('local projection publication command', () => {
       new Set([
         'https://video.twimg.com/ext_tw_video/reviewed.mp4',
         'https://pbs.twimg.com/media/reviewed.jpg',
+        'https://pbs.twimg.com/media/reviewed-image.jpg',
       ]),
       () => {
         const request = { correlation: globalThis.crypto.randomUUID() }
         requestCarriers.push(request)
         return request
       },
-    )).resolves.toBe(2)
+    )).resolves.toBe(3)
     expect(updates).toEqual([expect.objectContaining({ id: 1, data: {
       visibility: 'internal_preview', delivery_target: 'x_cdn', preview_noindex: true,
       attribution_url: 'https://x.com/example/status/1',
     } }), expect.objectContaining({ id: 4, data: {
       sensitive_content_state: 'allowed', visibility: 'internal_preview', delivery_target: 'x_cdn', preview_noindex: true,
       attribution_url: 'https://x.com/example/status/4',
+    } }), expect.objectContaining({ id: 7, data: {
+      sensitive_content_state: 'allowed', visibility: 'internal_preview', delivery_target: 'x_cdn', preview_noindex: true,
+      attribution_url: 'https://x.com/example/status/7',
     } })])
     expect(updates.every((update) => typeof update.req === 'object' && update.req !== null)).toBe(true)
-    expect(new Set(requestCarriers).size).toBe(2)
+    expect(new Set(requestCarriers).size).toBe(3)
   })
 
   it.each(['page-projections', 'publication-projections'] as const)('rolls back a failed %s batch without snapshot or active-pointer advancement', async (failureCollection) => {

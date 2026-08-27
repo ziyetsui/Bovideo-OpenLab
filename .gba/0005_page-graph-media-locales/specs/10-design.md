@@ -128,6 +128,12 @@ safe X rows to `internal_preview` for this engineering environment. Promotion wr
 `delivery_target=x_cdn`, source attribution and an audit event; blocked/restricted rows
 remain private.
 
+For `sensitive_content_state=unknown`, the reviewed allowlist is type-aware: an image
+requires its rendered `remote_url` to be reviewed and may omit `thumbnail_url`; a video
+requires both its rendered video URL and poster URL to be reviewed. If an image does
+carry a separate thumbnail, that thumbnail must also be reviewed. This avoids treating
+the normal absence of a redundant image thumbnail as a reason to suppress the image.
+
 ### 4.2 Rendering
 
 - Image: lazy `<img>`, intrinsic dimensions when known, `referrerPolicy=no-referrer`

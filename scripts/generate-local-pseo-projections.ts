@@ -713,9 +713,12 @@ export const promoteEligibleXPreviewMedia = async (
     const source = asRecord(document.source_ref)
     const remoteURL = typeof document.remote_url === 'string' ? document.remote_url : undefined
     const attributionURL = typeof source.canonical_url === 'string' ? source.canonical_url : undefined
+    const reviewedRemoteURL = remoteURL !== undefined && reviewedURLs.has(remoteURL)
+    const reviewedThumbnailURL = typeof document.thumbnail_url === 'string' && reviewedURLs.has(document.thumbnail_url)
     const reviewedUnknown = document.sensitive_content_state === 'unknown' &&
-      typeof document.remote_url === 'string' && reviewedURLs.has(document.remote_url) &&
-      typeof document.thumbnail_url === 'string' && reviewedURLs.has(document.thumbnail_url)
+      reviewedRemoteURL && (document.media_type === 'image'
+        ? document.thumbnail_url == null || reviewedThumbnailURL
+        : reviewedThumbnailURL)
     if (document.provider !== 'x' || document.visibility !== 'private_evidence' ||
       (document.sensitive_content_state !== 'allowed' && !reviewedUnknown) || document.rights_state === 'blocked' || document.rights_state === 'revoked' ||
       remoteURL === undefined || attributionURL === undefined) return []
