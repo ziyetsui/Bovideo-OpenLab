@@ -28,6 +28,8 @@ const adaptBasePage = (page: HubPage | GalleryPage | EntityPage | DetailPage) =>
   description: page.description,
   route: page.route,
   locale: page.locale,
+  index_state: page.index_state,
+  translation_state: page.translation_state,
   navigation: page.links.map(({ href, label, relation }) => ({ href, label, relation })),
   breadcrumbs: page.breadcrumbs.map(({ href, label }) => ({ href, label })),
   slots: [],
@@ -77,7 +79,7 @@ const adaptSlots = (slots: readonly ProjectedSlot[]) => slots.map((slot) => ({
   key: slot.slot_key,
   items: slot.items.map((item) => 'prompt_ref' in item
     ? { ...item, kind: 'prompt_card' as const }
-    : { ...item, kind: 'node' as const, label: item.node_ref }),
+    : { ...item, kind: 'node' as const, label: item.label ?? item.node_ref }),
 }))
 
 /** Converts an already bound projection into the renderer-only model for its page family. */

@@ -6,7 +6,7 @@ import { MediaBlock } from '../../../frontend/components/media-block'
 import { phase3PreviewMediaEvidence, phase3PreviewProjectionFor } from '../../../tests/phase3/frontend/preview-adapter'
 
 describe('Phase 3 frontend preview adapter', () => {
-  it('keeps remote X evidence out of the Detail projection', () => {
+  it('carries reviewed noindex-preview X evidence in the Detail projection', () => {
     const projection = phase3PreviewProjectionFor({
       family: 'detail',
       locale: 'en',
@@ -14,7 +14,8 @@ describe('Phase 3 frontend preview adapter', () => {
     })
 
     expect(projection?.page.page_type).toBe('detail')
-    expect(JSON.stringify(projection)).not.toContain('pbs.twimg.com')
+    expect(JSON.stringify(projection)).toContain('pbs.twimg.com')
+    expect(JSON.stringify(projection)).toContain('"visibility":"internal_preview"')
   })
 
   it('passes remote X evidence through the public-media policy boundary without leaking its host', () => {

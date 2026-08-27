@@ -47,6 +47,7 @@ const basePageSchema = z.object({
   page_id: immutableIdSchema,
   route: z.string().regex(/^\/[a-zA-Z0-9/-]+$/),
   locale: applicationLocaleSchema,
+  translation_state: z.enum(['source', 'translated', 'source_fallback']).optional(),
   index_state: z.enum(['not_generated', 'discoverable_noindex', 'index_candidate', 'indexable', 'retired']),
   title: z.string().min(1),
   description: z.string().min(1),

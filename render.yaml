@@ -5,7 +5,7 @@ services:
     plan: free
     autoDeploy: false
     buildCommand: pnpm install --frozen-lockfile && pnpm run build
-    startCommand: pnpm start
+    startCommand: pnpm payload:migrate && pnpm start
     healthCheckPath: /readyz
     envVars:
       - key: NODE_VERSION
@@ -19,4 +19,4 @@ services:
       - key: PAYLOAD_DB_PUSH
         value: "false"
       - key: P1V_RUNTIME
-        value: "true"
+        value: "false"

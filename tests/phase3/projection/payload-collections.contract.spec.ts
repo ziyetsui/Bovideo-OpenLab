@@ -11,6 +11,8 @@ import { describe, expect, it } from 'vitest'
 import { validateMediaEvidence } from '@/collections/MediaEvidence'
 import { validateModuleEnvelopePayload } from '@/collections/ModuleEnvelopes'
 import { PageProjections, validatePageProjection } from '@/collections/PageProjections'
+import { PublicationProjections } from '@/collections/PublicationProjections'
+import { APPLICATION_LOCALES } from '@/contracts/locale'
 import { mediaEvidenceSchema } from '@/contracts/projection'
 import { P3_GOLDEN_FIXTURES } from '@/page/fixtures'
 import { up as upPayloadSchema } from '@/migrations-postgres/20260824_022230_phase1_payload_schema'
@@ -20,6 +22,7 @@ import { up as upProjectionPersistence } from '@/migrations-postgres/20260826_05
 import { up as upProjectionReviewFixes } from '@/migrations-postgres/20260826_053407_phase3_projection_review_fixes'
 import { up as upPhaseAFixWave } from '@/migrations-postgres/20260826_070000_phase3_phasea_fix_wave'
 import { up as upSourceProviderEnum } from '@/migrations-postgres/20260826_210000_source_provider_public_search'
+import { up as upProjectionApplicationLocales } from '@/migrations-postgres/20260827_120000_projection_application_locales'
 
 const ID = '00000000-0000-4000-8000-000000000101'
 const OTHER_ID = '00000000-0000-4000-8000-000000000102'
@@ -40,6 +43,13 @@ const projectionData = () => {
 const mediaData = () => ({ media_evidence_id: ID, source_ref: 1, source_version: HASH, workflow_run: 1, provider: 'x', provider_media_id: 'x-1', media_type: 'image', width: 640, height: 480, duration_ms: null, remote_url: 'https://pbs.twimg.com/media/x.jpg', thumbnail_url: null, observed_at: '2026-08-26T00:00:00.000Z', rights_state: 'display_licensed', sensitive_content_state: 'allowed', content_hash: HASH, visibility: 'internal_preview', delivery_target: 'x_cdn', preview_noindex: true, attribution_url: 'https://x.com/example/status/1' })
 
 describe('Payload projection collections', () => {
+  it('uses the canonical 16-locale set for immutable projections and bindings', () => {
+    const pageLocale = PageProjections.fields.find((field) => 'name' in field && field.name === 'locale')
+    const bindingLocale = PublicationProjections.fields.find((field) => 'name' in field && field.name === 'locale')
+    expect(pageLocale).toMatchObject({ options: [...APPLICATION_LOCALES] })
+    expect(bindingLocale).toMatchObject({ options: [...APPLICATION_LOCALES] })
+  })
+
   it('migrates the public-search provider enum additively', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'bo-source-provider-enum-'))
     const server = createServer()
@@ -141,6 +151,9 @@ describe('Payload projection collections', () => {
       await upPayloadSchema({ db } as never); await upLocaleRisk({ db } as never); await upGoldenApproval({ db } as never)
       await client.query(`INSERT INTO module_envelopes (stable_id, source_version, module_id, page_id, locale, module_type, module_version, rights_state, content_hash, generated_by, observed_at, review_state) VALUES ('legacy-row', 'legacy-v1', 'legacy-module', 'legacy-page', 'en', 'prompt', 1, 'first_party', '${HASH}', 'rpa', '2026-08-26T00:00:00.000Z', 'approved')`)
       await expect(upProjectionPersistence({ db } as never)).resolves.toBeUndefined()
+      await expect(upProjectionApplicationLocales({ db } as never)).resolves.toBeUndefined()
+      const enumLocales = await client.query('SELECT unnest(enum_range(NULL::enum_page_projections_locale))::text AS locale')
+      expect(enumLocales.rows.map((row) => row.locale)).toEqual(expect.arrayContaining([...APPLICATION_LOCALES]))
       await client.query(`INSERT INTO sources (stable_id, source_version, provider, provider_record_id, canonical_url, raw_ref, captured_at, content_hash, rights_state, deletion_state) VALUES ('media-source', 'media-v1', 'first_party', 'media-source', 'https://example.invalid/source', '{}'::jsonb, '2026-08-26T00:00:00.000Z', '${HASH}', 'first_party', 'active')`)
       await client.query(`INSERT INTO media_evidence (media_evidence_id, source_ref_id, provider, provider_media_id, media_type, remote_url, observed_at, rights_state, sensitive_content_state, content_hash, visibility, delivery_target, preview_noindex) VALUES ('legacy-media', 1, 'first_party', 'legacy-media', 'image', 'https://cdn.example.invalid/legacy.jpg', '2026-08-26T00:00:00.000Z', 'first_party', 'allowed', '${HASH}', 'private_evidence', 'private_reference', true)`)
       await expect(upProjectionReviewFixes({ db } as never)).resolves.toBeUndefined()

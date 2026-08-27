@@ -1,6 +1,7 @@
 import type { CollectionBeforeChangeHook, CollectionConfig } from 'payload'
 
 import { auditAfterChange } from '@/access/payload-access'
+import { APPLICATION_LOCALES } from '@/contracts/locale'
 import { hasInternalProjectionPublicationCapability } from '@/publication/payload-projection-command'
 
 const rejectUntrustedBinding: CollectionBeforeChangeHook = ({ data, operation, req }) => {
@@ -30,7 +31,7 @@ export const PublicationProjections: CollectionConfig = {
     { name: 'publish_version', type: 'number', required: true, min: 1, index: true },
     { name: 'projection', type: 'relationship', relationTo: 'page-projections', required: true, index: true },
     { name: 'route', type: 'text', required: true, index: true },
-    { name: 'locale', type: 'select', required: true, options: ['en', 'de', 'es', 'fr', 'it', 'ja', 'ko', 'nl', 'pl', 'pt-BR', 'ru', 'sv', 'tr', 'zh-CN', 'zh-TW', 'ar'], index: true },
+    { name: 'locale', type: 'select', required: true, options: [...APPLICATION_LOCALES], index: true },
     { name: 'family', type: 'select', required: true, options: ['hub', 'gallery', 'entity', 'detail'], index: true },
     { name: 'internal_noindex', type: 'checkbox', required: true, defaultValue: true },
   ],

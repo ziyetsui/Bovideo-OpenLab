@@ -70,6 +70,7 @@ export interface Config {
     users: User;
     media: Media;
     sources: Source;
+    'source-observations': SourceObservation;
     'prompt-artifacts': PromptArtifact;
     'taxonomy-nodes': TaxonomyNode;
     'page-records': PageRecord;
@@ -79,6 +80,7 @@ export interface Config {
     'module-envelopes': ModuleEnvelope;
     'media-evidence': MediaEvidence;
     'page-projections': PageProjection;
+    'publication-projections': PublicationProjection;
     'publication-snapshots': PublicationSnapshot;
     'publication-states': PublicationState;
     'active-publication-pointers': ActivePublicationPointer;
@@ -96,6 +98,7 @@ export interface Config {
     users: UsersSelect<false> | UsersSelect<true>;
     media: MediaSelect<false> | MediaSelect<true>;
     sources: SourcesSelect<false> | SourcesSelect<true>;
+    'source-observations': SourceObservationsSelect<false> | SourceObservationsSelect<true>;
     'prompt-artifacts': PromptArtifactsSelect<false> | PromptArtifactsSelect<true>;
     'taxonomy-nodes': TaxonomyNodesSelect<false> | TaxonomyNodesSelect<true>;
     'page-records': PageRecordsSelect<false> | PageRecordsSelect<true>;
@@ -105,6 +108,7 @@ export interface Config {
     'module-envelopes': ModuleEnvelopesSelect<false> | ModuleEnvelopesSelect<true>;
     'media-evidence': MediaEvidenceSelect<false> | MediaEvidenceSelect<true>;
     'page-projections': PageProjectionsSelect<false> | PageProjectionsSelect<true>;
+    'publication-projections': PublicationProjectionsSelect<false> | PublicationProjectionsSelect<true>;
     'publication-snapshots': PublicationSnapshotsSelect<false> | PublicationSnapshotsSelect<true>;
     'publication-states': PublicationStatesSelect<false> | PublicationStatesSelect<true>;
     'active-publication-pointers': ActivePublicationPointersSelect<false> | ActivePublicationPointersSelect<true>;
@@ -280,8 +284,9 @@ export interface Source {
     updated_by?: (number | null) | User;
     correlation_id?: string | null;
   };
-  provider: 'twitter241' | 'first_party' | 'submission' | 'official_doc';
+  provider: 'twitter241' | 'x_public_search' | 'first_party' | 'submission' | 'official_doc';
   provider_record_id: string;
+  semantic_key?: string | null;
   canonical_url: string;
   raw_ref:
     | {
@@ -331,6 +336,73 @@ export interface TaxonomyNode {
   promotion_state: 'candidate' | 'reviewed' | 'qualified' | 'retired';
   evidence_refs?: (number | Source)[] | null;
   inventory_count?: number | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "source-observations".
+ */
+export interface SourceObservation {
+  id: number;
+  stable_id: string;
+  revision: number;
+  schema_version: number;
+  source_version: string;
+  source_ref: number | Source;
+  workflow_run: number | WorkflowRun;
+  provider: string;
+  provider_record_id: string;
+  canonical_url: string;
+  raw_ref:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
+  captured_at: string;
+  content_hash: string;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "workflow-runs".
+ */
+export interface WorkflowRun {
+  id: number;
+  stable_id: string;
+  revision: number;
+  schema_version: number;
+  source_version: string;
+  status: 'queued' | 'running' | 'succeeded' | 'failed' | 'stale_ignored';
+  audit: {
+    created_by?: (number | null) | User;
+    updated_by?: (number | null) | User;
+    correlation_id?: string | null;
+  };
+  job_type:
+    | 'ingest'
+    | 'translate'
+    | 'browser'
+    | 'publish'
+    | 'export'
+    | 'withdraw'
+    | 'extract_graph'
+    | 'generate_module'
+    | 'project_page'
+    | 'validate_release'
+    | 'observe_search';
+  idempotency_key: string;
+  attempt: number;
+  input_ref: string;
+  output_ref?: string | null;
+  error_class?: string | null;
+  lease_owner?: string | null;
+  lease_expires_at?: string | null;
   updatedAt: string;
   createdAt: string;
 }
@@ -927,44 +999,6 @@ export interface MediaEvidence {
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
- * via the `definition` "workflow-runs".
- */
-export interface WorkflowRun {
-  id: number;
-  stable_id: string;
-  revision: number;
-  schema_version: number;
-  source_version: string;
-  status: 'queued' | 'running' | 'succeeded' | 'failed' | 'stale_ignored';
-  audit: {
-    created_by?: (number | null) | User;
-    updated_by?: (number | null) | User;
-    correlation_id?: string | null;
-  };
-  job_type:
-    | 'ingest'
-    | 'translate'
-    | 'browser'
-    | 'publish'
-    | 'export'
-    | 'withdraw'
-    | 'extract_graph'
-    | 'generate_module'
-    | 'project_page'
-    | 'validate_release'
-    | 'observe_search';
-  idempotency_key: string;
-  attempt: number;
-  input_ref: string;
-  output_ref?: string | null;
-  error_class?: string | null;
-  lease_owner?: string | null;
-  lease_expires_at?: string | null;
-  updatedAt: string;
-  createdAt: string;
-}
-/**
- * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "page-projections".
  */
 export interface PageProjection {
@@ -973,21 +1007,21 @@ export interface PageProjection {
   page_id: string;
   locale:
     | 'en'
-    | 'de'
-    | 'es'
-    | 'fr'
-    | 'it'
-    | 'ja'
-    | 'ko'
-    | 'nl'
-    | 'pl'
-    | 'pt-BR'
-    | 'ru'
-    | 'sv'
-    | 'tr'
     | 'zh-CN'
     | 'zh-TW'
-    | 'ar';
+    | 'ja-JP'
+    | 'ko-KR'
+    | 'de-DE'
+    | 'fr-FR'
+    | 'it-IT'
+    | 'es-ES'
+    | 'es-419'
+    | 'pt-BR'
+    | 'pt-PT'
+    | 'hi-IN'
+    | 'th-TH'
+    | 'tr-TR'
+    | 'vi-VN';
   family: 'hub' | 'gallery' | 'entity' | 'detail';
   state: 'draft' | 'validated' | 'released' | 'superseded' | 'withdrawn';
   /**
@@ -1009,6 +1043,37 @@ export interface PageProjection {
   renderer_version: string;
   validation_report_ref: string;
   workflow_run: number | WorkflowRun;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "publication-projections".
+ */
+export interface PublicationProjection {
+  id: number;
+  publish_version: number;
+  projection: number | PageProjection;
+  route: string;
+  locale:
+    | 'en'
+    | 'zh-CN'
+    | 'zh-TW'
+    | 'ja-JP'
+    | 'ko-KR'
+    | 'de-DE'
+    | 'fr-FR'
+    | 'it-IT'
+    | 'es-ES'
+    | 'es-419'
+    | 'pt-BR'
+    | 'pt-PT'
+    | 'hi-IN'
+    | 'th-TH'
+    | 'tr-TR'
+    | 'vi-VN';
+  family: 'hub' | 'gallery' | 'entity' | 'detail';
+  internal_noindex: boolean;
   updatedAt: string;
   createdAt: string;
 }
@@ -1213,6 +1278,10 @@ export interface PayloadLockedDocument {
         value: number | Source;
       } | null)
     | ({
+        relationTo: 'source-observations';
+        value: number | SourceObservation;
+      } | null)
+    | ({
         relationTo: 'prompt-artifacts';
         value: number | PromptArtifact;
       } | null)
@@ -1247,6 +1316,10 @@ export interface PayloadLockedDocument {
     | ({
         relationTo: 'page-projections';
         value: number | PageProjection;
+      } | null)
+    | ({
+        relationTo: 'publication-projections';
+        value: number | PublicationProjection;
       } | null)
     | ({
         relationTo: 'publication-snapshots';
@@ -1380,6 +1453,7 @@ export interface SourcesSelect<T extends boolean = true> {
       };
   provider?: T;
   provider_record_id?: T;
+  semantic_key?: T;
   canonical_url?: T;
   raw_ref?: T;
   captured_at?: T;
@@ -1388,6 +1462,26 @@ export interface SourcesSelect<T extends boolean = true> {
   rights_state?: T;
   rights_basis?: T;
   deletion_state?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "source-observations_select".
+ */
+export interface SourceObservationsSelect<T extends boolean = true> {
+  stable_id?: T;
+  revision?: T;
+  schema_version?: T;
+  source_version?: T;
+  source_ref?: T;
+  workflow_run?: T;
+  provider?: T;
+  provider_record_id?: T;
+  canonical_url?: T;
+  raw_ref?: T;
+  captured_at?: T;
+  content_hash?: T;
   updatedAt?: T;
   createdAt?: T;
 }
@@ -1724,6 +1818,20 @@ export interface PageProjectionsSelect<T extends boolean = true> {
   renderer_version?: T;
   validation_report_ref?: T;
   workflow_run?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "publication-projections_select".
+ */
+export interface PublicationProjectionsSelect<T extends boolean = true> {
+  publish_version?: T;
+  projection?: T;
+  route?: T;
+  locale?: T;
+  family?: T;
+  internal_noindex?: T;
   updatedAt?: T;
   createdAt?: T;
 }

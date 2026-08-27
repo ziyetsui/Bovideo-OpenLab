@@ -1,22 +1,25 @@
 import { Fragment, type ReactNode } from 'react'
 
 import { CopyPromptButton } from '../components/controls'
+import { MediaBlock } from '../components/media-block'
+import { ProjectionItem } from '../components/projection-item'
 import type { FrontendDetailModel } from '../projection/types'
 import { provenanceLabel } from '@/detail/provenance'
 import type { DetailQuestion } from '@/detail/schema'
+import { messagesForFrontendLocale, type FrontendMessages } from '../localization/messages'
 
-const moduleTitle: Readonly<Record<DetailQuestion['id'], string>> = {
-  identity: 'Identity',
-  outcome: 'Outcome',
-  prompt: 'Prompt',
-  inputs: 'Inputs',
-  parameters: 'Parameters',
-  examples: 'Examples',
-  workflow: 'Workflow',
-  variations: 'Variations',
-  source_signals: 'Source + Signals',
-  actions: 'Actions',
-}
+const moduleTitle = (messages: FrontendMessages): Readonly<Record<DetailQuestion['id'], string>> => ({
+  identity: messages.chrome.identity,
+  outcome: messages.chrome.outcome,
+  prompt: messages.chrome.prompt,
+  inputs: messages.chrome.inputs,
+  parameters: messages.chrome.parameters,
+  examples: messages.chrome.examples,
+  workflow: messages.chrome.workflow,
+  variations: messages.chrome.variations,
+  source_signals: messages.chrome.sourceSignals,
+  actions: messages.chrome.actions,
+})
 
 type DetailQuestionState = Pick<FrontendDetailModel['detail']['questions'][number], 'state' | 'provenance'>
 
@@ -26,7 +29,10 @@ const stateLabel = (question: DetailQuestionState): string => question.state ===
     ? 'Stale candidate; requires current review'
     : provenanceLabel(question.provenance)
 
-const QuestionContent = ({ question }: Readonly<{ question: FrontendDetailModel['detail']['questions'][number] }>): ReactNode => {
+const QuestionContent = ({ question, messages }: Readonly<{
+  question: FrontendDetailModel['detail']['questions'][number]
+  messages: FrontendMessages
+}>): ReactNode => {
   if (question.state === 'unavailable' || question.state === 'stale')
     return <p role="status">{stateLabel(question)}</p>
 
@@ -46,7 +52,7 @@ const QuestionContent = ({ question }: Readonly<{ question: FrontendDetailModel[
       </div>
     }
     case 'inputs':
-      return <div className="detail-columns"><section><h3>Required</h3><ul>{question.content.required.map((item) => <li key={item}>{item}</li>)}</ul></section><section><h3>Optional</h3><ul>{question.content.optional.map((item) => <li key={item}>{item}</li>)}</ul></section></div>
+      return <div className="detail-columns"><section><h3>{messages.chrome.required}</h3><ul>{question.content.required.map((item) => <li key={item}>{item}</li>)}</ul></section><section><h3>{messages.chrome.optional}</h3><ul>{question.content.optional.map((item) => <li key={item}>{item}</li>)}</ul></section></div>
     case 'parameters':
       return <dl className="parameter-grid">{question.content.items.map((item) => <div key={item.name}><dt>{item.name}</dt><dd>{item.value}</dd></div>)}</dl>
     case 'examples':
@@ -69,10 +75,26 @@ const QuestionContent = ({ question }: Readonly<{ question: FrontendDetailModel[
   }
 }
 
-export const DetailPage = ({ model }: Readonly<{ model: FrontendDetailModel }>) => <article className="page-frame detail-page" data-generated-filler-count={model.detail.generatedFillerCount}>
+export const DetailPage = ({ model }: Readonly<{ model: FrontendDetailModel }>) => {
+  const messages = messagesForFrontendLocale(model.locale)
+  const titles = moduleTitle(messages)
+  const promptCard = model.slots.flatMap((slot) => slot.items).find((item) => item.kind === 'prompt_card')
+  const media = promptCard?.kind === 'prompt_card' ? promptCard.media ?? [] : []
+  const related = model.slots.find((slot) => slot.key === 'related')?.items ?? []
+  const mode = model.index_state === 'indexable' ? 'public' : 'preview'
+
+  return <article className="page-frame detail-page" data-generated-filler-count={model.detail.generatedFillerCount}>
+  {media.length === 0 ? null : <section className="page-section detail-media" data-slot="detail-media" aria-label="Prompt media">
+    <div className="detail-media__grid">{media.map((item) => <MediaBlock key={item.media_evidence_id} media={item} mode={mode} />)}</div>
+  </section>}
   {model.detail.questions.map((question, index) => <section className="page-section detail-module" key={question.id} id={`question-${question.id}`} data-ui="detail-module" data-module-state={question.state} data-provenance={question.provenance} aria-labelledby={`heading-${question.id}`}>
-    <h2 id={`heading-${question.id}`}>{String(index + 1).padStart(2, '0')} / {moduleTitle[question.id]}</h2>
+    <h2 id={`heading-${question.id}`}>{String(index + 1).padStart(2, '0')} / {titles[question.id]}</h2>
     <p className="detail-module__provenance" aria-label={`Provenance: ${provenanceLabel(question.provenance)}`}>{stateLabel(question)}</p>
-    <QuestionContent question={question} />
+    <QuestionContent question={question} messages={messages} />
   </section>)}
+  {related.length === 0 ? null : <section className="page-section family-shelf" data-slot="related" aria-labelledby="detail-related">
+    <h2 id="detail-related">{messages.chrome.relatedDestinations}</h2>
+    <ul>{related.map((item, index) => <li key={item.kind === 'prompt_card' ? item.prompt_ref.id : `${item.node_ref}-${index}`}><ProjectionItem item={item} mode={mode} /></li>)}</ul>
+  </section>}
 </article>
+}

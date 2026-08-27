@@ -1,17 +1,94 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-import { artifactsFromPayload, nextLocalProjectionPublishVersion, parseLocalProjectionPublishArgs, planLocalPointerActivation } from '../../../scripts/generate-local-pseo-projections'
+import { artifactsFromPayload, loadReviewedXMediaAllowlist, nextLocalProjectionPublishVersion, parseLocalProjectionPublishArgs, planLocalPointerActivation, promoteEligibleXPreviewMedia, publishLocalPseoProjections } from '../../../scripts/generate-local-pseo-projections'
 
 describe('local projection publication command', () => {
   it('accepts an explicit locale and rejects arbitrary publication arguments', () => {
-    expect(parseLocalProjectionPublishArgs(['--locale', 'en'])).toEqual({ locale: 'en' })
+    expect(parseLocalProjectionPublishArgs(['--locale', 'en', '--concurrency', '4'])).toEqual({ locale: 'en', concurrency: 4, promoteXPreviewMedia: false, reviewedMediaManifest: undefined })
+    expect(parseLocalProjectionPublishArgs(['--promote-x-preview-media', '--reviewed-media-manifest', '/private/reviewed.jsonl'])).toEqual({ locale: 'en', concurrency: 8, promoteXPreviewMedia: true, reviewedMediaManifest: '/private/reviewed.jsonl' })
+    expect(parseLocalProjectionPublishArgs([])).toEqual({ locale: 'en', concurrency: 8, promoteXPreviewMedia: false, reviewedMediaManifest: undefined })
     expect(() => parseLocalProjectionPublishArgs(['--locale', 'xx'])).toThrow(/locale/i)
+    expect(() => parseLocalProjectionPublishArgs(['--locale', 'zh-CN'])).toThrow(/source projection.*en only/i)
+    expect(() => parseLocalProjectionPublishArgs(['--concurrency', '17'])).toThrow(/concurrency/i)
+    expect(() => parseLocalProjectionPublishArgs(['--reviewed-media-manifest', '/private/reviewed.jsonl'])).toThrow(/promote/i)
     expect(() => parseLocalProjectionPublishArgs(['--publish-version', '1'])).toThrow(/unknown/i)
+  })
+
+  it('uses a fresh Payload request carrier for every concurrent publication mutation', async () => {
+    const requestCarriers: object[] = []
+    let createdID = 100
+    const publisher = { id: 1, stable_id: '00000000-0000-4000-8000-000000000901', identity_kind: 'human', roles: ['publisher'], service_scopes: [] }
+    const service = { id: 2, stable_id: '00000000-0000-4000-8000-000000000902', identity_kind: 'service', roles: [], service_scopes: ['publish'] }
+    const payload = {
+      async find(input: Record<string, unknown>) {
+        if (input.collection === 'prompt-artifacts') return { docs: [{
+          stable_id: '00000000-0000-4000-8000-000000000101', canonical_label: 'Source prompt',
+          prompt: { original_text: 'Source prompt bytes.' }, original_language: 'en', outcome: { media_type: 'image' },
+          source: { id: 10, stable_id: '00000000-0000-4000-8000-000000000201', source_version: `sha256:v1:${'a'.repeat(64)}`, captured_at: '2026-08-26T00:00:00.000Z', canonical_url: 'https://x.com/example/status/1' },
+        }] }
+        if (input.collection === 'media-evidence') return { docs: [] }
+        if (input.collection === 'users') return { docs: [publisher, service] }
+        if (input.collection === 'active-publication-pointers') return { docs: [{ id: 5, publish_version: null, previous_verified_version: null, revision: 0 }] }
+        return { docs: [] }
+      },
+      async create(input: Record<string, unknown>) {
+        if (typeof input.req === 'object' && input.req !== null) requestCarriers.push(input.req)
+        createdID += 1
+        if (input.collection === 'workflow-runs') return { id: createdID, stable_id: `00000000-0000-4000-8000-${String(createdID).padStart(12, '0')}`, revision: 1, status: 'queued' }
+        return { id: createdID, ...(input.data as object) }
+      },
+      async update(input: Record<string, unknown>) { return { id: input.id, ...(input.data as object) } },
+      async findByID() { return {} },
+      async destroy() {},
+    }
+
+    const result = await publishLocalPseoProjections({ locale: 'en', concurrency: 3, promoteXPreviewMedia: false, reviewedMediaManifest: undefined }, payload as never)
+
+    expect(result.routes).toHaveLength(3)
+    expect(result).toMatchObject({ artifactCount: 1, projectionCount: 3, bindingCount: 3, promotedMediaCount: 0 })
+    expect(result.durationMs).toBeGreaterThanOrEqual(0)
+    expect(new Set(requestCarriers).size).toBe(requestCarriers.length)
   })
 
   it('does not reuse a version left by an interrupted local projection run', () => {
     expect(nextLocalProjectionPublishVersion({ snapshotVersions: [], workflowKeys: ['local-projection:1:projection-a'] })).toBe(2)
     expect(nextLocalProjectionPublishVersion({ snapshotVersions: [2], workflowKeys: ['local-projection:1:projection-a', 'unrelated'] })).toBe(3)
+  })
+
+  it('invokes Payload transaction methods with their adapter receiver intact', async () => {
+    const receiver = {
+      marker: 'payload-adapter',
+      async beginTransaction(this: { marker: string }) {
+        if (this.marker !== 'payload-adapter') throw new Error('transaction receiver lost')
+        return 'tx-receiver'
+      },
+      async commitTransaction(this: { marker: string }, _id: string) {
+        if (this.marker !== 'payload-adapter') throw new Error('commit receiver lost')
+      },
+      async rollbackTransaction(this: { marker: string }, _id: string) {
+        if (this.marker !== 'payload-adapter') throw new Error('rollback receiver lost')
+      },
+    }
+    const requestTransactions: unknown[] = []
+    const payload = {
+      async find() {
+        return { docs: [{
+          id: 1, provider: 'x', visibility: 'private_evidence', sensitive_content_state: 'allowed', rights_state: 'metadata_only',
+          remote_url: 'https://pbs.twimg.com/media/safe.jpg', source_ref: { canonical_url: 'https://x.com/example/status/1' },
+        }] }
+      },
+      async update(input: Record<string, unknown>) {
+        requestTransactions.push((input.req as Record<string, unknown>).transactionID)
+        return input
+      },
+      db: receiver,
+    }
+
+    await expect(promoteEligibleXPreviewMedia(payload as never, 1, new Set(), (transactionID) => ({ transactionID }))).resolves.toBe(1)
+    expect(requestTransactions).toEqual(['tx-receiver'])
   })
 
   it('bootstraps the pointer at the null triple before advancing to a release', () => {
@@ -72,5 +149,228 @@ describe('local projection publication command', () => {
     } as never, 'en')
 
     expect(artifact?.mediaType).toBe('unresolved')
+  })
+
+  it('preserves source prompt bytes including leading and trailing whitespace', async () => {
+    const original = '\n  Keep every source byte.  \t'
+    const [artifact] = await artifactsFromPayload({
+      async find(input: Record<string, unknown>) {
+        if (input.collection === 'media-evidence') return { docs: [] }
+        return { docs: [{
+          stable_id: '00000000-0000-4000-8000-000000000112', canonical_label: 'Whitespace prompt',
+          prompt: { original_text: original }, outcome: { media_type: 'image' },
+          source: { stable_id: '00000000-0000-4000-8000-000000000212', source_version: `sha256:v1:${'d'.repeat(64)}`, captured_at: '2026-08-26T00:00:00.000Z' },
+        }] }
+      },
+    } as never, 'en')
+
+    expect(artifact?.text).toBe(original)
+  })
+
+  it('joins promoted media evidence to its source and derives an unresolved outcome type', async () => {
+    const [artifact] = await artifactsFromPayload({
+      async find(input: Record<string, unknown>) {
+        if (input.collection === 'media-evidence') return { docs: [{
+          media_evidence_id: '00000000-0000-4000-8000-000000000501',
+          source_ref: { id: 42 }, provider: 'x', provider_media_id: 'tweet-image', media_type: 'image',
+          remote_url: 'https://pbs.twimg.com/media/source-image.jpg', thumbnail_url: null,
+          observed_at: '2026-08-26T00:00:00.000Z', rights_state: 'metadata_only', sensitive_content_state: 'allowed',
+          content_hash: `sha256:v1:${'c'.repeat(64)}`, visibility: 'internal_preview', delivery_target: 'x_cdn',
+          preview_noindex: true, attribution_url: 'https://x.com/example/status/1',
+        }] }
+        return { docs: [{
+          stable_id: '00000000-0000-4000-8000-000000000111', canonical_label: 'Media-backed prompt',
+          prompt: { original_text: 'Keep exact source prompt bytes.' }, outcome: {},
+          source: { id: 42, stable_id: '00000000-0000-4000-8000-000000000211', source_version: `sha256:v1:${'b'.repeat(64)}`, captured_at: '2026-08-26T00:00:00.000Z' },
+        }] }
+      },
+    } as never, 'en')
+
+    expect(artifact).toMatchObject({
+      mediaType: 'image',
+      media: [expect.objectContaining({ remote_url: 'https://pbs.twimg.com/media/source-image.jpg', delivery_target: 'x_cdn' })],
+    })
+  })
+
+  it('promotes only safe X CDN evidence with source attribution into noindex preview media', async () => {
+    const updates: Record<string, unknown>[] = []
+    const requestCarriers: object[] = []
+    const payload = {
+      async find() {
+        return { docs: [
+          { id: 1, provider: 'x', visibility: 'private_evidence', sensitive_content_state: 'allowed', rights_state: 'metadata_only', remote_url: 'https://pbs.twimg.com/media/safe.jpg', source_ref: { canonical_url: 'https://x.com/example/status/1' } },
+          { id: 2, provider: 'x', visibility: 'private_evidence', sensitive_content_state: 'blocked', rights_state: 'metadata_only', remote_url: 'https://pbs.twimg.com/media/blocked.jpg', source_ref: { canonical_url: 'https://x.com/example/status/2' } },
+          { id: 3, provider: 'x', visibility: 'private_evidence', sensitive_content_state: 'allowed', rights_state: 'metadata_only', remote_url: 'https://example.com/foreign.jpg', source_ref: { canonical_url: 'https://x.com/example/status/3' } },
+          { id: 4, provider: 'x', visibility: 'private_evidence', sensitive_content_state: 'unknown', rights_state: 'metadata_only', remote_url: 'https://video.twimg.com/ext_tw_video/reviewed.mp4', thumbnail_url: 'https://pbs.twimg.com/media/reviewed.jpg', source_ref: { canonical_url: 'https://x.com/example/status/4' } },
+          { id: 5, provider: 'x', visibility: 'private_evidence', sensitive_content_state: 'unknown', rights_state: 'metadata_only', remote_url: 'https://video.twimg.com/ext_tw_video/unreviewed.mp4', thumbnail_url: 'https://pbs.twimg.com/media/reviewed.jpg', source_ref: { canonical_url: 'https://x.com/example/status/5' } },
+          { id: 6, provider: 'x', visibility: 'private_evidence', sensitive_content_state: 'unknown', rights_state: 'metadata_only', remote_url: 'https://video.twimg.com/ext_tw_video/reviewed.mp4', thumbnail_url: null, source_ref: { canonical_url: 'https://x.com/example/status/6' } },
+        ] }
+      },
+      async update(input: Record<string, unknown>) { updates.push(input); return input },
+    }
+
+    await expect(promoteEligibleXPreviewMedia(
+      payload as never,
+      2,
+      new Set([
+        'https://video.twimg.com/ext_tw_video/reviewed.mp4',
+        'https://pbs.twimg.com/media/reviewed.jpg',
+      ]),
+      () => {
+        const request = { correlation: globalThis.crypto.randomUUID() }
+        requestCarriers.push(request)
+        return request
+      },
+    )).resolves.toBe(2)
+    expect(updates).toEqual([expect.objectContaining({ id: 1, data: {
+      visibility: 'internal_preview', delivery_target: 'x_cdn', preview_noindex: true,
+      attribution_url: 'https://x.com/example/status/1',
+    } }), expect.objectContaining({ id: 4, data: {
+      sensitive_content_state: 'allowed', visibility: 'internal_preview', delivery_target: 'x_cdn', preview_noindex: true,
+      attribution_url: 'https://x.com/example/status/4',
+    } })])
+    expect(updates.every((update) => typeof update.req === 'object' && update.req !== null)).toBe(true)
+    expect(new Set(requestCarriers).size).toBe(2)
+  })
+
+  it.each(['page-projections', 'publication-projections'] as const)('rolls back a failed %s batch without snapshot or active-pointer advancement', async (failureCollection) => {
+    const operations: string[] = []
+    const rolledBack: string[] = []
+    const committed: string[] = []
+    let transaction = 0
+    let createdID = 300
+    const publisher = { id: 1, stable_id: '00000000-0000-4000-8000-000000000901', identity_kind: 'human', roles: ['publisher'], service_scopes: [] }
+    const service = { id: 2, stable_id: '00000000-0000-4000-8000-000000000902', identity_kind: 'service', roles: [], service_scopes: ['publish'] }
+    const payload = {
+      async find(input: Record<string, unknown>) {
+        if (input.collection === 'prompt-artifacts') return { docs: [{
+          stable_id: '00000000-0000-4000-8000-000000000101', canonical_label: 'Source prompt',
+          prompt: { original_text: 'Source prompt bytes.' }, original_language: 'en', outcome: { media_type: 'image' },
+          source: { id: 10, stable_id: '00000000-0000-4000-8000-000000000201', source_version: `sha256:v1:${'a'.repeat(64)}`, captured_at: '2026-08-26T00:00:00.000Z' },
+        }] }
+        if (input.collection === 'media-evidence') return { docs: [] }
+        if (input.collection === 'users') return { docs: [publisher, service] }
+        if (input.collection === 'active-publication-pointers') return { docs: [{ id: 5, publish_version: 7, previous_verified_version: 6, revision: 3 }] }
+        return { docs: [] }
+      },
+      async create(input: Record<string, unknown>) {
+        operations.push(`create:${String(input.collection)}`)
+        if (input.collection === failureCollection) throw new Error(`injected ${failureCollection} failure`)
+        createdID += 1
+        if (input.collection === 'workflow-runs') return { id: createdID, stable_id: `00000000-0000-4000-8000-${String(createdID).padStart(12, '0')}`, revision: 1, status: 'queued' }
+        return { id: createdID, ...(input.data as object) }
+      },
+      async update(input: Record<string, unknown>) {
+        operations.push(`update:${String(input.collection)}`)
+        return { id: input.id, ...(input.data as object) }
+      },
+      async destroy() {},
+      db: {
+        async beginTransaction() { transaction += 1; return `tx-${transaction}` },
+        async commitTransaction(id: string) { committed.push(id) },
+        async rollbackTransaction(id: string) { rolledBack.push(id) },
+      },
+    }
+
+    await expect(publishLocalPseoProjections(
+      { locale: 'en', concurrency: 3, promoteXPreviewMedia: false, reviewedMediaManifest: undefined },
+      payload as never,
+    )).rejects.toThrow(new RegExp(`injected ${failureCollection} failure`, 'i'))
+    expect(operations).not.toContain('create:publication-snapshots')
+    expect(operations).not.toContain('update:active-publication-pointers')
+    expect(rolledBack).toHaveLength(1)
+    expect(committed).toHaveLength(failureCollection === 'page-projections' ? 0 : 1)
+  })
+
+  it('reconciles a 1,043-artifact publisher run through workflows, bindings, snapshot and active pointer', async () => {
+    const sourceHash = `sha256:v1:${'e'.repeat(64)}`
+    const promptDocuments = Array.from({ length: 1_043 }, (_, index) => ({
+      stable_id: `00000000-0000-4000-8000-${String(index + 2_000).padStart(12, '0')}`,
+      canonical_label: `Source prompt ${index}`,
+      prompt: { original_text: `Exact source prompt ${index}.` },
+      original_language: 'en',
+      outcome: { media_type: 'image' },
+      source: {
+        id: index + 1,
+        stable_id: `00000000-0000-4000-8000-${String(index + 4_000).padStart(12, '0')}`,
+        source_version: sourceHash,
+        captured_at: '2026-08-26T00:00:00.000Z',
+      },
+    }))
+    const publisher = { id: 1, stable_id: '00000000-0000-4000-8000-000000000901', identity_kind: 'human', roles: ['publisher'], service_scopes: [] }
+    const service = { id: 2, stable_id: '00000000-0000-4000-8000-000000000902', identity_kind: 'service', roles: [], service_scopes: ['publish'] }
+    let createdID = 10_000
+    let workflowCreated = 0
+    let workflowSucceeded = 0
+    let bindingCreated = 0
+    let snapshotCreated = 0
+    let activePointer: Record<string, unknown> = { id: 5, publish_version: 10, previous_verified_version: 9, revision: 4 }
+    const payload = {
+      async find(input: Record<string, unknown>) {
+        if (input.collection === 'prompt-artifacts') return { docs: promptDocuments }
+        if (input.collection === 'media-evidence') return { docs: [] }
+        if (input.collection === 'users') return { docs: [publisher, service] }
+        if (input.collection === 'active-publication-pointers') return { docs: [activePointer] }
+        return { docs: [] }
+      },
+      async create(input: Record<string, unknown>) {
+        createdID += 1
+        if (input.collection === 'workflow-runs') {
+          workflowCreated += 1
+          return { id: createdID, stable_id: `00000000-0000-4000-8000-${String(createdID).padStart(12, '0')}`, revision: 1, status: 'queued' }
+        }
+        if (input.collection === 'publication-projections') bindingCreated += 1
+        if (input.collection === 'publication-snapshots') snapshotCreated += 1
+        return { id: createdID, ...(input.data as object) }
+      },
+      async update(input: Record<string, unknown>) {
+        if (input.collection === 'workflow-runs') workflowSucceeded += 1
+        if (input.collection === 'active-publication-pointers') activePointer = { id: input.id, ...(input.data as object) }
+        return { id: input.id, ...(input.data as object) }
+      },
+      async destroy() {},
+    }
+
+    const result = await publishLocalPseoProjections(
+      { locale: 'en', concurrency: 8, promoteXPreviewMedia: false, reviewedMediaManifest: undefined },
+      payload as never,
+    )
+
+    expect(result).toMatchObject({
+      artifactCount: 1_043,
+      projectionCount: 1_055,
+      bindingCount: 1_055,
+      promotedMediaCount: 0,
+    })
+    expect(workflowCreated).toBe(result.projectionCount)
+    expect(workflowSucceeded).toBe(result.projectionCount)
+    expect(bindingCreated).toBe(result.bindingCount)
+    expect(snapshotCreated).toBe(1)
+    expect(activePointer).toMatchObject({
+      publish_version: result.publishVersion,
+      previous_verified_version: 10,
+      revision: 5,
+    })
+    expect(new Set(result.routes).size).toBe(result.projectionCount)
+  }, 30_000)
+
+  it('builds the X CDN allowlist only from manifest rows explicitly marked non-sensitive', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'bo-reviewed-media-'))
+    const manifest = join(directory, 'media_refs.jsonl')
+    try {
+      await writeFile(manifest, [
+        JSON.stringify({ possibly_sensitive: false, media: [{ thumb_url: 'https://pbs.twimg.com/media/reviewed.jpg', video: { mp4_high: 'https://video.twimg.com/ext_tw_video/reviewed-high.mp4', variants: [{ url: 'https://video.twimg.com/ext_tw_video/reviewed.mp4' }] } }] }),
+        JSON.stringify({ possibly_sensitive: true, media: [{ thumb_url: 'https://pbs.twimg.com/media/rejected.jpg' }] }),
+      ].join('\n'), 'utf8')
+
+      const allowlist = await loadReviewedXMediaAllowlist(manifest)
+      expect([...allowlist]).toEqual([
+        'https://pbs.twimg.com/media/reviewed.jpg',
+        'https://video.twimg.com/ext_tw_video/reviewed-high.mp4',
+        'https://video.twimg.com/ext_tw_video/reviewed.mp4',
+      ])
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
   })
 })

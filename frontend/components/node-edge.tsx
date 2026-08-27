@@ -10,7 +10,7 @@ export const canRenderPageLink = <Item extends PageLinkPolicy>(item: Item): item
   item.link_policy === 'link' &&
   item.href !== null &&
   item.render_target === 'page' &&
-  item.target_indexability === 'indexable'
+  item.target_indexability !== 'none'
 
 export const NodeEdge = ({ item }: Readonly<{ item: NodeEdgeItem }>) => {
   const attributes = {

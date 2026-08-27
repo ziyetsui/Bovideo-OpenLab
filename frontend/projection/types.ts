@@ -10,7 +10,7 @@ const frontendNavigationSchema = pageLinkSchema.pick({
   relation: true,
 }).strict()
 
-export const frontendNodeItemSchema = projectedNodeItemSchema.extend({
+export const frontendNodeItemSchema = projectedNodeItemSchema.safeExtend({
   kind: z.literal('node'),
   label: z.string().min(1),
 }).strict()
@@ -35,6 +35,8 @@ const frontendPageModelBaseSchema = z.object({
   description: z.string().min(1).optional(),
   route: z.string().regex(/^\//).optional(),
   locale: z.string().min(1).optional(),
+  index_state: z.enum(['not_generated', 'discoverable_noindex', 'index_candidate', 'indexable', 'retired']).optional(),
+  translation_state: z.enum(['source', 'translated', 'source_fallback']).optional(),
   navigation: z.array(frontendNavigationSchema),
   breadcrumbs: z.array(pageBreadcrumbSchema).optional(),
   slots: z.array(frontendSlotSchema),

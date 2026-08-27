@@ -28,8 +28,8 @@ const projectedLinkSchema = z
       ctx.addIssue({ code: 'custom', message: 'candidate nodes cannot link' })
     if (item.link_policy === 'link' && item.href === null)
       ctx.addIssue({ code: 'custom', message: 'linked item requires href' })
-    if (item.link_policy === 'link' && (item.render_target !== 'page' || item.target_indexability !== 'indexable'))
-      ctx.addIssue({ code: 'custom', message: 'page links require an indexable page target' })
+    if (item.link_policy === 'link' && (item.render_target !== 'page' || item.target_indexability === 'none'))
+      ctx.addIssue({ code: 'custom', message: 'page links require an indexable or noindex page target' })
     if (item.link_policy === 'filter_state' && (item.href === null || item.render_target !== 'filter' || item.target_indexability !== 'noindex'))
       ctx.addIssue({ code: 'custom', message: 'filter state requires a noindex filter target and href' })
     if (item.link_policy === 'dead_text' && (item.href !== null || item.render_target !== 'tag' || item.target_indexability !== 'none'))
@@ -37,6 +37,7 @@ const projectedLinkSchema = z
   })
 
 export const projectedNodeItemSchema = projectedLinkSchema.extend({
+  label: z.string().min(1).optional(),
   node_ref: z.string().min(1),
   edge_ref: z.string().nullable(),
 })
@@ -45,6 +46,10 @@ export const projectedPromptCardSchema = projectedLinkSchema.extend({
   prompt_ref: relationRefSchema,
   title: z.string().min(1),
   summary: z.string().min(1).nullable(),
+  /** New projectors supply these; optional fields keep prior immutable releases readable. */
+  prompt_text: z.string().min(1).optional(),
+  prompt_language: z.string().min(1).optional(),
+  media: z.array(z.lazy(() => mediaEvidenceSchema)).max(4).optional(),
   tags: z.array(projectedNodeItemSchema),
 })
 
@@ -57,7 +62,7 @@ export const projectedSlotSchema = z
   })
   .strict()
 
-export const navigationProjectionItemSchema = projectedNodeItemSchema.extend({
+export const navigationProjectionItemSchema = projectedNodeItemSchema.safeExtend({
   label: z.string().min(1),
   promotion_state: z.enum(['candidate', 'reviewed', 'qualified', 'retired']),
   target_page_id: immutableIdSchema.nullable(),
@@ -111,8 +116,12 @@ export const mediaEvidenceSchema = z
     const isXCDN = remoteHost === 'twimg.com' || remoteHost.endsWith('.twimg.com')
     const thumbnailHost = media.thumbnail_url === null ? null : new URL(media.thumbnail_url).hostname.toLowerCase()
     const thumbnailIsXCDN = thumbnailHost === 'twimg.com' || thumbnailHost?.endsWith('.twimg.com') === true
-    if (media.delivery_target === 'x_cdn' && !isXCDN)
-      ctx.addIssue({ code: 'custom', path: ['remote_url'], message: 'x_cdn delivery requires a twimg.com URL' })
+    if (media.delivery_target === 'x_cdn') {
+      if (!isXCDN)
+        ctx.addIssue({ code: 'custom', path: ['remote_url'], message: 'x_cdn delivery requires a twimg.com URL' })
+      if (media.thumbnail_url !== null && !thumbnailIsXCDN)
+        ctx.addIssue({ code: 'custom', path: ['thumbnail_url'], message: 'x_cdn thumbnails require a twimg.com URL' })
+    }
     if (media.visibility === 'private_evidence' &&
       (media.delivery_target !== 'private_reference' || media.preview_noindex !== true))
       ctx.addIssue({ code: 'custom', message: 'private evidence must remain a noindex private reference' })

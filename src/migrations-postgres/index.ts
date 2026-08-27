@@ -10,6 +10,7 @@ import * as migration_20260826_220000_source_semantic_provenance from './2026082
 import * as migration_20260826_230000_publication_projection_bindings from './20260826_230000_publication_projection_bindings';
 import * as migration_20260826_230100_payload_lock_relation_repair from './20260826_230100_payload_lock_relation_repair';
 import * as migration_20260827_070000_payload_enable_rls from './20260827_070000_payload_enable_rls';
+import * as migration_20260827_120000_projection_application_locales from './20260827_120000_projection_application_locales';
 
 export const migrations = [
   {
@@ -71,5 +72,10 @@ export const migrations = [
     up: migration_20260827_070000_payload_enable_rls.up,
     down: migration_20260827_070000_payload_enable_rls.down,
     name: '20260827_070000_payload_enable_rls'
+  },
+  {
+    up: migration_20260827_120000_projection_application_locales.up,
+    down: migration_20260827_120000_projection_application_locales.down,
+    name: '20260827_120000_projection_application_locales'
   },
 ];

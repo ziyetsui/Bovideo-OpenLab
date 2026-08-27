@@ -46,7 +46,7 @@ test.describe('Phase 3 projection-backed frontend families', () => {
         expect(response?.status(), family).toBe(200)
         await expect(page.locator('h1'), `${family}/${viewport.name} owns exactly one page heading`).toHaveCount(1)
         await expect(page.locator('meta[name="robots"]')).toHaveAttribute('content', /noindex/)
-        await expect(page.locator('header nav[aria-label="Primary"]')).toHaveCount(1)
+        await expect(page.locator('header nav[aria-label="Primary navigation"]')).toHaveCount(1)
         await expect(page.locator('footer.frontend-site-footer nav[aria-label="Footer"]')).toHaveCount(1)
         await expect(page.locator('footer.frontend-site-footer a[href="/data-policy"], footer.frontend-site-footer a[href="/legal"]')).toHaveCount(0)
 
@@ -85,11 +85,11 @@ test.describe('Phase 3 projection-backed frontend families', () => {
 
       await context.grantPermissions(['clipboard-read', 'clipboard-write'])
       await page.goto(families.detail.route)
-      expect(await page.content()).not.toContain(remoteEvidenceHost)
       const candidates = page.locator('[data-candidate="true"]')
       await expect(candidates).not.toHaveCount(0)
       await expect(candidates.locator('a')).toHaveCount(0)
-      await expect(page.locator(`[data-media-mode="public"], img[src*="${remoteEvidenceHost}"], video[src*="${remoteEvidenceHost}"], a[href*="${remoteEvidenceHost}"]`)).toHaveCount(0)
+      await expect(page.locator(`[data-media-mode="preview"] img[src*="${remoteEvidenceHost}"]`)).toHaveCount(1)
+      await expect(page.getByRole('link', { name: 'Source attribution' })).toHaveAttribute('href', /x\.com/)
 
       await tabTo(page, '[data-action="copy-prompt"]')
       await expect(page.locator('[data-action="copy-prompt"]')).toBeFocused()

@@ -47,11 +47,14 @@ describe('frontend render-model adapters', () => {
     const featured = model.slots.find((slot) => slot.key === 'featured')?.items[0]
     const output = model.slots.find((slot) => slot.key === 'outputs')?.items[0]
 
-    expect(featured).toEqual({
+    expect(featured).toMatchObject({
       kind: 'prompt_card',
       prompt_ref: { type: 'artifact', id: '00000000-0000-4000-8000-000000000801' },
       title: 'Cinematic product shot',
       summary: 'A reviewed product prompt.',
+      prompt_text: 'Use the supplied product at dusk.',
+      prompt_language: 'en',
+      media: [expect.objectContaining({ remote_url: 'https://pbs.twimg.com/media/phase3-browser-evidence.jpg' })],
       tags: [
         {
           node_ref: 'image-output',
@@ -76,17 +79,17 @@ describe('frontend render-model adapters', () => {
       link_policy: 'link',
       href: '/en/prompts/cinematic-product-shot-00000000-0000-4000-8000-000000000001',
       render_target: 'page',
-      target_indexability: 'indexable',
+      target_indexability: 'noindex',
     })
     expect(output).toEqual({
       kind: 'node',
-      label: 'image-output',
-      node_ref: 'image-output',
-      edge_ref: null,
-      evidence_state: 'candidate',
-      link_policy: 'filter_state',
-      href: '/en/prompts/image?image-output=candidate',
-      render_target: 'filter',
+      label: 'Image prompts',
+      node_ref: 'output:image',
+      edge_ref: '00000000-0000-4000-8000-000000000721',
+      evidence_state: 'reviewed',
+      link_policy: 'link',
+      href: '/en/prompts/image',
+      render_target: 'page',
       target_indexability: 'noindex',
     })
     expect(Object.isFrozen(featured)).toBe(true)

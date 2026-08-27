@@ -1,10 +1,10 @@
 import { createHash } from 'node:crypto'
 
 import type { ApplicationLocale } from '@/contracts/locale'
-import { pageProjectionSchema, type PageProjection, type ProjectedNodeItem, type ProjectedPromptCard, type ProjectedSlot } from '@/contracts/projection'
+import { pageProjectionSchema, type MediaEvidence, type NavigationProjection, type PageProjection, type ProjectedNodeItem, type ProjectedPromptCard, type ProjectedSlot } from '@/contracts/projection'
 
-const RENDERER_VERSION = 'local-internal-projector-v1'
-const schemaHash = `sha256:v1:${createHash('sha256').update('page-projection-schema-v1').digest('hex')}`
+const RENDERER_VERSION = 'local-internal-projector-v2'
+const schemaHash = `sha256:v1:${createHash('sha256').update('page-projection-schema-v2').digest('hex')}`
 const GALLERY_PAGE_SIZE = 100
 
 export type ImportedProjectionArtifact = Readonly<{
@@ -13,7 +13,9 @@ export type ImportedProjectionArtifact = Readonly<{
   sourceVersion: string
   title: string
   text: string
+  originalLanguage?: string
   mediaType: 'image' | 'video' | 'unresolved'
+  media?: readonly MediaEvidence[]
   observedAt: string
   canonicalURL?: string
   entityRefs?: readonly ImportedProjectionEntity[]
@@ -60,6 +62,7 @@ const reviewedEntityRefs = (artifact: ImportedProjectionArtifact): readonly Impo
 )
 
 const taxonomyNode = (entity: ImportedProjectionEntity, locale: ApplicationLocale): ProjectedNodeItem => ({
+  label: entity.label,
   node_ref: entity.stableKey,
   edge_ref: null,
   evidence_state: entity.promotionState === 'qualified' ? 'qualified' : 'reviewed',
@@ -83,14 +86,33 @@ const card = (artifact: ImportedProjectionArtifact, locale: ApplicationLocale): 
     prompt_ref: { type: 'artifact', id: artifact.id },
     title: artifact.title,
     summary: artifact.text.slice(0, 240),
+    prompt_text: artifact.text,
+    prompt_language: artifact.originalLanguage ?? 'en',
+    media: [...(artifact.media ?? [])].slice(0, 4),
     tags: reviewedEntityRefs(artifact).map((entity) => taxonomyNode(entity, locale)),
     evidence_state: 'reviewed',
-    link_policy: 'filter_state',
+    link_policy: 'link',
     href: `/${locale}/prompts/${slug(artifact.title)}-${routeID}`,
-    render_target: 'filter',
+    render_target: 'page',
     target_indexability: 'noindex',
   }
 }
+
+const pageNode = (input: Readonly<{
+  nodeRef: string
+  label: string
+  href: string
+  edgeSeed: string
+}>): ProjectedNodeItem => ({
+  label: input.label,
+  node_ref: input.nodeRef,
+  edge_ref: stable(`edge:${input.edgeSeed}`),
+  evidence_state: 'reviewed',
+  link_policy: 'link',
+  href: input.href,
+  render_target: 'page',
+  target_indexability: 'noindex',
+})
 
 const promptSlot = (slotKey: string, artifacts: readonly ImportedProjectionArtifact[], locale: ApplicationLocale, limit = 12): ProjectedSlot => ({
   slot_key: slotKey,
@@ -183,6 +205,7 @@ const base = (input: InternalProjectionInput, pageID: string, route: string, tit
   page_id: pageID,
   route,
   locale: input.locale,
+  translation_state: 'source' as const,
   index_state: 'discoverable_noindex' as const,
   title,
   description,
@@ -207,7 +230,7 @@ const projection = (input: InternalProjectionInput, family: PageProjection['fami
     locale: input.locale,
     family,
     state: 'released',
-    dependency_hash: hash(input.artifacts.map((artifact) => `${artifact.id}:${artifact.sourceVersion}`).sort().join('|')),
+    dependency_hash: hash(input.artifacts.map((artifact) => `${artifact.id}:${artifact.sourceVersion}:${(artifact.media ?? []).map((media) => media.content_hash).join(',')}`).sort().join('|')),
     page: parsedPage,
     navigation: { version: `local-internal:${input.publishVersion}`, items: [] },
     slots: parsedSlots,
@@ -219,10 +242,46 @@ const projection = (input: InternalProjectionInput, family: PageProjection['fami
   })
 }
 
+const navigationItemForProjection = (projectionValue: PageProjection): NavigationProjection['items'][number] | undefined => {
+  const page = projectionValue.page
+  if (page.page_type === 'gallery' && page.page !== 1) return undefined
+  const identity = page.page_type === 'hub'
+    ? { nodeRef: 'hub:prompts', label: page.h1 }
+    : page.page_type === 'gallery'
+      ? { nodeRef: `output:${page.media_type}`, label: page.h1 }
+      : page.page_type === 'entity' && page.entity_kind === 'model'
+        ? { nodeRef: `model:${page.entity_slug}`, label: page.h1 }
+        : undefined
+  if (identity === undefined) return undefined
+  return {
+    ...pageNode({ nodeRef: identity.nodeRef, label: identity.label, href: page.route, edgeSeed: `navigation:${page.page_id}` }),
+    label: identity.label,
+    promotion_state: 'reviewed',
+    target_page_id: page.page_id,
+  }
+}
+
+const attachNavigation = (projections: readonly PageProjection[]): readonly PageProjection[] => {
+  const items = uniqueNodes(projections.flatMap((projectionValue) => {
+    const item = navigationItemForProjection(projectionValue)
+    return item === undefined ? [] : [item]
+  })) as NavigationProjection['items']
+  const navigation: NavigationProjection = {
+    version: `${RENDERER_VERSION}:${projections[0]?.page.snapshot_version ?? 0}`,
+    items,
+  }
+  return projections.map((projectionValue) => pageProjectionSchema.parse({
+    ...projectionValue,
+    navigation,
+    content_hash: hash(JSON.stringify({ page: projectionValue.page, slots: projectionValue.slots, navigation })),
+    link_hash: hash(JSON.stringify({ pageLinks: projectionValue.page.links, navigation })),
+  }))
+}
+
 /**
  * Materializes the four frontend families from Payload-approved source facts.
- * These are deliberately internal preview pages: they retain no remote media
- * URLs and every interactive destination is noindex filter state.
+ * These are deliberately noindex preview pages. Only explicitly projected
+ * internal-preview/public media and reviewed page edges can become interactive.
  */
 export const buildInternalNoindexProjections = (input: InternalProjectionInput): readonly PageProjection[] => {
   if (!Number.isSafeInteger(input.publishVersion) || input.publishVersion < 1) throw new Error('publishVersion must be a positive integer')
@@ -240,19 +299,34 @@ export const buildInternalNoindexProjections = (input: InternalProjectionInput):
     featured_module_ids: [],
     diversity_rule_version: 'local-internal-v1',
   }
-  const modelArtifacts = artifactsForEntityKind(artifacts, 'model')
   const useCaseArtifacts = artifactsForEntityKind(artifacts, 'use_case')
   const styleArtifacts = artifactsForEntityKind(artifacts, 'style')
+  const entityGroups = groupedEntities(artifacts)
+  const entityNode = (group: EntityGroup): ProjectedNodeItem => pageNode({
+    nodeRef: group.entity.stableKey,
+    label: group.entity.label,
+    href: `/${input.locale}/prompts/${entityRouteSegment[group.entity.kind]}/${group.slug}`,
+    edgeSeed: `entity:${group.entity.stableKey}`,
+  })
+  const outputNodes = (['image', 'video'] as const).flatMap((mediaType) =>
+    artifacts.some((artifact) => artifact.mediaType === mediaType)
+      ? [pageNode({
+          nodeRef: `output:${mediaType}`,
+          label: `${mediaType === 'image' ? 'Image' : 'Video'} prompts`,
+          href: `/${input.locale}/prompts/${mediaType}`,
+          edgeSeed: `output:${mediaType}`,
+        })]
+      : [])
   const projections: PageProjection[] = [projection(input, 'hub', hub, [
     promptSlot('featured', artifacts, input.locale),
     emptySlot('trending'),
     promptSlot('tasks', useCaseArtifacts, input.locale),
     emptySlot('camera_motion'),
-    promptSlot('models', modelArtifacts, input.locale),
+    nodeSlot('models', entityGroups.filter((group) => group.entity.kind === 'model').map(entityNode)),
     promptSlot('styles', styleArtifacts, input.locale),
     emptySlot('collections'),
     emptySlot('creators'),
-    emptySlot('outputs'),
+    nodeSlot('outputs', outputNodes),
     nodeSlot('use_cases', taxonomyNodesFor(artifacts, input.locale, ['use_case'])),
     emptySlot('techniques'),
   ])]
@@ -283,7 +357,9 @@ export const buildInternalNoindexProjections = (input: InternalProjectionInput):
         nodeSlot('styles', taxonomyNodesFor(pageArtifacts, input.locale, ['style'])),
         emptySlot('subjects'),
         promptSlot('featured', pageArtifacts, input.locale, GALLERY_PAGE_SIZE),
-        promptSlot('models', artifactsForEntityKind(pageArtifacts, 'model'), input.locale, GALLERY_PAGE_SIZE),
+        nodeSlot('models', entityGroups
+          .filter((group) => group.entity.kind === 'model' && group.artifacts.some((artifact) => pageArtifacts.some((pageArtifact) => pageArtifact.id === artifact.id)))
+          .map(entityNode)),
         emptySlot('subject_band'),
         emptySlot('residual'),
         emptySlot('related'),
@@ -291,7 +367,7 @@ export const buildInternalNoindexProjections = (input: InternalProjectionInput):
     }
   }
 
-  for (const group of groupedEntities(artifacts)) {
+  for (const group of entityGroups) {
     const entityRoute = `/${input.locale}/prompts/${entityRouteSegment[group.entity.kind]}/${group.slug}`
     const entityID = stable(`entity:${group.entity.kind}:${group.entity.stableKey}:${input.locale}`)
     const groupSourceRefs = [...new Set(group.artifacts.map((artifact) => artifact.sourceID))]
@@ -330,6 +406,19 @@ export const buildInternalNoindexProjections = (input: InternalProjectionInput):
     const detailPageID = stable(`detail-page:${artifact.id}:${input.locale}`)
     const detailRoute = `/${input.locale}/prompts/${slug(artifact.title)}-${detailRouteID}`
     const unavailable = { state: 'unavailable' as const, provenance: 'unavailable' as const, sourceRefs: [artifact.sourceID] }
+    const relatedNodes = uniqueNodes([
+      ...(artifact.mediaType === 'image' || artifact.mediaType === 'video'
+        ? [pageNode({
+            nodeRef: `output:${artifact.mediaType}`,
+            label: `${artifact.mediaType === 'image' ? 'Image' : 'Video'} prompts`,
+            href: `/${input.locale}/prompts/${artifact.mediaType}`,
+            edgeSeed: `detail:${artifact.id}:output:${artifact.mediaType}`,
+          })]
+        : []),
+      ...entityGroups
+        .filter((group) => group.artifacts.some((groupArtifact) => groupArtifact.id === artifact.id))
+        .map(entityNode),
+    ])
     const detail = {
       ...base(input, detailPageID, detailRoute, artifact.title, artifact.text.slice(0, 320), [artifact.sourceID], artifact.observedAt),
       page_type: 'detail' as const,
@@ -348,10 +437,12 @@ export const buildInternalNoindexProjections = (input: InternalProjectionInput):
         questions: [
           { id: 'identity' as const, state: 'present' as const, provenance: 'explicit' as const, sourceRefs: [artifact.sourceID], content: { label: artifact.title, artifactKind: 'prompt' } },
           { id: 'outcome' as const, state: 'present' as const, provenance: 'explicit' as const, sourceRefs: [artifact.sourceID], content: { summary: `Imported ${artifact.mediaType} prompt evidence.`, medium: artifact.mediaType } },
-          { id: 'prompt' as const, state: 'present' as const, provenance: 'explicit' as const, sourceRefs: [artifact.sourceID], content: { originalText: artifact.text, originalLanguage: 'en', copyDefault: 'original' as const } },
+          { id: 'prompt' as const, state: 'present' as const, provenance: 'explicit' as const, sourceRefs: [artifact.sourceID], content: { originalText: artifact.text, originalLanguage: artifact.originalLanguage ?? 'en', copyDefault: 'original' as const } },
           { id: 'inputs' as const, ...unavailable, content: { required: [], optional: [] } },
           { id: 'parameters' as const, ...unavailable, content: { items: [] } },
-          { id: 'examples' as const, ...unavailable, content: { mediaRefs: [] } },
+          artifact.media !== undefined && artifact.media.length > 0
+            ? { id: 'examples' as const, state: 'present' as const, provenance: 'explicit' as const, sourceRefs: [artifact.sourceID], content: { mediaRefs: artifact.media.slice(0, 4).map((media) => media.media_evidence_id) } }
+            : { id: 'examples' as const, ...unavailable, content: { mediaRefs: [] } },
           { id: 'workflow' as const, ...unavailable, content: { steps: [] } },
           { id: 'variations' as const, ...unavailable, content: { artifactRefs: [] } },
           { id: 'source_signals' as const, state: 'present' as const, provenance: 'explicit' as const, sourceRefs: [artifact.sourceID], content: { sourceUrl: artifact.canonicalURL ?? `https://internal.local/sources/${artifact.sourceID}`, observedAt: artifact.observedAt, likes: null, bookmarks: null, views: null } },
@@ -359,7 +450,10 @@ export const buildInternalNoindexProjections = (input: InternalProjectionInput):
         ],
       },
     }
-    projections.push(projection(input, 'detail', detail, [{ slot_key: 'prompt', renderer: 'prompt', source_mode: 'content_envelope', items: [card(artifact, input.locale)] }]))
+    projections.push(projection(input, 'detail', detail, [
+      { slot_key: 'prompt', renderer: 'prompt', source_mode: 'content_envelope', items: [card(artifact, input.locale)] },
+      nodeSlot('related', relatedNodes),
+    ]))
   }
-  return assertUniqueRoutes(projections)
+  return assertUniqueRoutes(attachNavigation(projections))
 }

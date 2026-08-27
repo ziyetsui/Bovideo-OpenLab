@@ -48,6 +48,15 @@ describe('pSEO frontend Detail page', () => {
     expect(html).not.toMatch(/<a[^>]+data-candidate/)
   })
 
+  it('localizes input requirement labels on non-English detail routes', () => {
+    const html = renderToStaticMarkup(<DetailPage model={{ ...detailWithCountryVariable, locale: 'zh-CN' }} />)
+
+    expect(html).toContain('<h3>必填</h3>')
+    expect(html).toContain('<h3>可选</h3>')
+    expect(html).not.toContain('<h3>Required</h3>')
+    expect(html).not.toContain('<h3>Optional</h3>')
+  })
+
   it('leaves one H1 and one main when composed inside the frontend shell', async () => {
     const content = <FrontendSiteShell
       page={source}

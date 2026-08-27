@@ -1,6 +1,7 @@
 import { APIError, type CollectionBeforeChangeHook, type CollectionConfig } from 'payload'
 
 import { auditAfterChange, collectionAccess } from '@/access/payload-access'
+import { APPLICATION_LOCALES } from '@/contracts/locale'
 import { pageProjectionSchema } from '@/contracts/projection'
 import { hasInternalProjectionPublicationCapability } from '@/publication/payload-projection-command'
 
@@ -67,7 +68,7 @@ export const PageProjections: CollectionConfig = {
   fields: [
     { name: 'projection_id', type: 'text', required: true, unique: true, index: true },
     { name: 'page_id', type: 'text', required: true, index: true },
-    { name: 'locale', type: 'select', required: true, options: ['en', 'de', 'es', 'fr', 'it', 'ja', 'ko', 'nl', 'pl', 'pt-BR', 'ru', 'sv', 'tr', 'zh-CN', 'zh-TW', 'ar'] },
+    { name: 'locale', type: 'select', required: true, options: [...APPLICATION_LOCALES] },
     { name: 'family', type: 'select', required: true, options: ['hub', 'gallery', 'entity', 'detail'] },
     { name: 'state', type: 'select', required: true, options: ['draft', 'validated', 'released', 'superseded', 'withdrawn'] },
     { name: 'projection', type: 'json', required: true, admin: { description: 'Renderer-only page, navigation, and slot contract.' } },

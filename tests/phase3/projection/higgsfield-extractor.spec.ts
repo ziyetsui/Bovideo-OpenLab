@@ -4,7 +4,6 @@ import {
   compareGraphBytes,
   HIGGSFIELD_GRAPH_RULE_VERSION,
   persistGraphCandidateBatch,
-  toReviewableGraphCandidates,
   extractGraphCandidates,
   type ImportedPromptArtifact,
 } from '@/graph/higgsfield-extractor'

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { pageProjectionSchema } from '@/contracts/projection'
-import { mediaEvidenceSchema, projectedNodeItemSchema } from '@/contracts/projection'
+import { mediaEvidenceSchema, projectedNodeItemSchema, projectedPromptCardSchema } from '@/contracts/projection'
 import { navigationProjectionSchema } from '@/contracts/projection'
 import { edgeSchema } from '@/contracts/graph'
 import { workflowRunJobTypeSchema } from '@/contracts/workflow-run'
@@ -126,8 +126,40 @@ describe('projection contracts', () => {
     })).toMatchObject({ render_target: 'tag' })
   })
 
+  it('keeps noindex page destinations clickable and carries renderer-ready prompt media', () => {
+    expect(projectedNodeItemSchema.parse({
+      label: 'Image prompts',
+      node_ref: 'output:image',
+      edge_ref: UUID_A,
+      evidence_state: 'reviewed',
+      link_policy: 'link',
+      href: '/en/prompts/image',
+      render_target: 'page',
+      target_indexability: 'noindex',
+    })).toMatchObject({ href: '/en/prompts/image', target_indexability: 'noindex' })
+
+    expect(projectedPromptCardSchema.parse({
+      prompt_ref: { type: 'artifact', id: UUID_A },
+      title: 'Media-backed prompt',
+      summary: 'Reviewed preview',
+      prompt_text: 'Keep these exact prompt bytes.',
+      prompt_language: 'en',
+      media: [xPreviewMedia],
+      tags: [],
+      evidence_state: 'reviewed',
+      link_policy: 'link',
+      href: `/en/prompts/media-backed-${UUID_A}`,
+      render_target: 'page',
+      target_indexability: 'noindex',
+    })).toMatchObject({
+      prompt_text: 'Keep these exact prompt bytes.',
+      media: [expect.objectContaining({ media_evidence_id: UUID_A })],
+    })
+  })
+
   it('keeps X media in noindex preview and allows public media only from approved CDN rights', () => {
     expect(mediaEvidenceSchema.parse(xPreviewMedia)).toMatchObject({ visibility: 'internal_preview', preview_noindex: true })
+    expect(() => mediaEvidenceSchema.parse({ ...xPreviewMedia, thumbnail_url: 'https://third-party.invalid/poster.jpg' })).toThrow(/thumbnail.*twimg/i)
     expect(() => mediaEvidenceSchema.parse({ ...xPreviewMedia, visibility: 'public', preview_noindex: false })).toThrow(/public media/i)
     expect(() => mediaEvidenceSchema.parse({
       ...xPreviewMedia,

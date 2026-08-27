@@ -32,6 +32,8 @@ export const MediaBlock = ({ media, mode }: Readonly<{ media: RenderableMedia | 
     if (approvedMedia === undefined) return <UnavailableMedia />
     return <figure className="media-block" data-media-mode="public">
       {approvedMedia.media_type === 'image'
+        // This allowlisted catalog URL intentionally bypasses Next's optimizer.
+        // eslint-disable-next-line @next/next/no-img-element
         ? <img src={approvedMedia.url} alt="Evidence media" loading="lazy" />
         : <video controls preload="none" src={approvedMedia.url} />}
     </figure>
@@ -49,12 +51,15 @@ export const MediaBlock = ({ media, mode }: Readonly<{ media: RenderableMedia | 
     controls: true,
     preload: 'none',
     src: source,
+    ...(media.thumbnail_url === null ? {} : { poster: media.thumbnail_url }),
     ...dimensions,
     ...(previewNoindex ? { referrerPolicy: 'no-referrer' } : {}),
   } as unknown as ComponentPropsWithoutRef<'video'>
 
   return <figure className="media-block" data-media-mode={mode} data-preview-noindex={previewNoindex ? 'true' : undefined}>
     {mediaType === 'image'
+      // Preview URLs are immutable renderer evidence and must not be proxied/cached by Next.
+      // eslint-disable-next-line @next/next/no-img-element
       ? <img src={source} alt="Evidence media" loading="lazy" referrerPolicy={previewNoindex ? 'no-referrer' : undefined} {...dimensions} />
       : <video {...videoProperties} />}
     {media.attribution_url !== null ? <figcaption><a href={media.attribution_url} rel="noreferrer">Source attribution</a></figcaption> : null}

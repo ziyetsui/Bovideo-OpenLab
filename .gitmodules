@@ -1,0 +1,3 @@
+[submodule "vendors/youmind-ai-image-prompts-skill"]
+	path = vendors/youmind-ai-image-prompts-skill
+	url = https://github.com/YouMind-OpenLab/ai-image-prompts-skill.git

@@ -17,6 +17,20 @@ const artifact = (id: string, sourceID: string, text: string, mediaType: 'image'
   text,
   mediaType,
   observedAt: '2026-08-26T00:00:00.000Z',
+  originalLanguage: 'en',
+  media: [{
+    media_evidence_id: '00000000-0000-4000-8000-000000000501', source_ref: 1,
+    provider: 'x' as const, provider_media_id: `media-${id}`, media_type: mediaType,
+    width: 1200, height: 675, duration_ms: null,
+    remote_url: mediaType === 'image'
+      ? 'https://pbs.twimg.com/media/projected-card.jpg'
+      : 'https://video.twimg.com/ext_tw_video/projected-card.mp4',
+    thumbnail_url: mediaType === 'video' ? 'https://pbs.twimg.com/media/projected-card-thumb.jpg' : null,
+    observed_at: '2026-08-26T00:00:00.000Z', rights_state: 'metadata_only' as const,
+    sensitive_content_state: 'allowed' as const, content_hash: HASH,
+    visibility: 'internal_preview' as const, delivery_target: 'x_cdn' as const,
+    preview_noindex: true, attribution_url: 'https://x.com/example/status/1',
+  }],
 })
 
 describe('local internal projection publication', () => {
@@ -67,6 +81,12 @@ describe('local internal projection publication', () => {
       .toHaveLength(1)
     const firstHubCard = projections.find((projection) => projection.family === 'hub')?.slots.find((slot) => slot.slot_key === 'featured')?.items[0]
     expect(firstHubCard).toMatchObject({
+      prompt_text: 'Cinematic product image, soft daylight.',
+      prompt_language: 'en',
+      media: [expect.objectContaining({ remote_url: 'https://pbs.twimg.com/media/projected-card.jpg' })],
+      link_policy: 'link',
+      render_target: 'page',
+      target_indexability: 'noindex',
       tags: expect.arrayContaining([
         expect.objectContaining({ node_ref: 'model:higgsfield', link_policy: 'filter_state', target_indexability: 'noindex' }),
         expect.objectContaining({ node_ref: 'use_case:product-showcase', link_policy: 'filter_state', target_indexability: 'noindex' }),
@@ -75,9 +95,26 @@ describe('local internal projection publication', () => {
     expect(JSON.stringify(firstHubCard)).not.toContain('style:cinematic')
     for (const projection of projections) {
       expect(pageProjectionSchema.parse(projection).page.index_state).toBe('discoverable_noindex')
-      expect(JSON.stringify(projection)).not.toContain('pbs.twimg.com')
       expect(projection.state).toBe('released')
     }
+
+    const hub = projections.find((projection) => projection.family === 'hub')!
+    expect(hub.navigation.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ node_ref: 'output:image', href: '/en/prompts/image', link_policy: 'link', target_indexability: 'noindex' }),
+      expect.objectContaining({ node_ref: 'output:video', href: '/en/prompts/video', link_policy: 'link', target_indexability: 'noindex' }),
+    ]))
+    expect(hub.slots.find((slot) => slot.slot_key === 'outputs')?.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ node_ref: 'output:image', href: '/en/prompts/image' }),
+      expect.objectContaining({ node_ref: 'output:video', href: '/en/prompts/video' }),
+    ]))
+    const detail = projections.find((candidate) => candidate.family === 'detail' && candidate.page.route.includes('prompt-0101'))!
+    expect(detail.page.page_type === 'detail' && detail.page.detail.questions[5]).toMatchObject({
+      id: 'examples', state: 'present', content: { mediaRefs: ['00000000-0000-4000-8000-000000000501'] },
+    })
+    expect(detail.slots.find((slot) => slot.slot_key === 'related')?.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ node_ref: 'output:image', href: '/en/prompts/image', render_target: 'page' }),
+      expect.objectContaining({ node_ref: 'model:higgsfield', href: '/en/prompts/models/higgsfield', render_target: 'page' }),
+    ]))
   })
 
   it('binds every route to the exact immutable projection for one publication version', () => {
@@ -85,6 +122,24 @@ describe('local internal projection publication', () => {
     expect(bindings).toHaveLength(7)
     expect(new Set(bindings.map((binding) => binding.route)).size).toBe(7)
     expect(bindings.every((binding) => binding.publish_version === 1 && binding.internal_noindex)).toBe(true)
+  })
+
+  it('forms one traversable hub → gallery → entity → detail page graph', () => {
+    const routes = new Set(projections.map((projection) => projection.page.route))
+    const hub = projections.find((projection) => projection.family === 'hub')!
+    const galleryHref = hub.slots.find((slot) => slot.slot_key === 'outputs')?.items
+      .find((item) => 'node_ref' in item && item.node_ref === 'output:image')?.href
+    const gallery = projections.find((projection) => projection.page.route === galleryHref)!
+    const entityHref = gallery.slots.find((slot) => slot.slot_key === 'models')?.items
+      .find((item) => 'node_ref' in item && item.node_ref === 'model:higgsfield')?.href
+    const entity = projections.find((projection) => projection.page.route === entityHref)!
+    const detailHref = entity.slots.find((slot) => slot.slot_key === 'top_prompts')?.items
+      .find((item) => 'prompt_ref' in item)?.href
+
+    expect(galleryHref).toBe('/en/prompts/image')
+    expect(entityHref).toBe('/en/prompts/models/higgsfield')
+    expect(detailHref).toMatch(/^\/en\/prompts\/prompt-/)
+    expect([galleryHref, entityHref, detailHref].every((route) => typeof route === 'string' && routes.has(route))).toBe(true)
   })
 
   it('omits an empty gallery and deduplicates repeated artifact evidence into one detail route', () => {
@@ -114,15 +169,43 @@ describe('local internal projection publication', () => {
     expect(second.page.page_type === 'gallery' && second.page.page).toBe(2)
     expect(second.slots.find((slot) => slot.slot_key === 'featured')?.items).toHaveLength(1)
     expect(second.page.page_type === 'gallery' && second.page.previous_page).toBe('/en/prompts/image')
+    expect(first.navigation.items.filter((item) => item.node_ref === 'output:image')).toHaveLength(1)
+    expect(first.navigation.items.find((item) => item.node_ref === 'output:image')?.href).toBe('/en/prompts/image')
   })
 
-  it('never materializes output nodes without a reviewed taxonomy relationship', () => {
+  it('reconciles 1,043 artifacts into unique routes, bindings, navigation and discoverable gallery cards', () => {
+    const artifacts = Array.from({ length: 1_043 }, (_, index) => artifact(
+      `00000000-0000-4000-8000-${String(index + 2_000).padStart(12, '0')}`,
+      `00000000-0000-4000-8000-${String(index + 4_000).padStart(12, '0')}`,
+      `Source prompt ${index}.`,
+    ))
+    const result = buildInternalNoindexProjections({ locale: 'en', publishVersion: 5, artifacts })
+    const bindings = buildPublicationProjectionBindings({ publishVersion: 5, projections: result })
+    const galleryPromptRefs = result
+      .filter((projection) => projection.family === 'gallery')
+      .flatMap((projection) => projection.slots.find((slot) => slot.slot_key === 'featured')?.items ?? [])
+      .flatMap((item) => 'prompt_ref' in item ? [item.prompt_ref.id] : [])
+
+    expect(new Set(result.map((projection) => projection.page.route)).size).toBe(result.length)
+    expect(bindings).toHaveLength(result.length)
+    expect(new Set(bindings.map((binding) => binding.route)).size).toBe(result.length)
+    expect(galleryPromptRefs).toHaveLength(1_043)
+    expect(new Set(galleryPromptRefs).size).toBe(1_043)
+    for (const projection of result) {
+      const refs = projection.navigation.items.map((item) => item.node_ref)
+      expect(new Set(refs).size).toBe(refs.length)
+      expect(projection.navigation.items.filter((item) => item.node_ref === 'output:image')).toHaveLength(1)
+    }
+  })
+
+  it('materializes medium page nodes from observed inventory without fabricating taxonomy', () => {
     const hub = buildInternalNoindexProjections({ locale: 'en', publishVersion: 4, artifacts: [
       artifact('00000000-0000-4000-8000-000000000104', '00000000-0000-4000-8000-000000000204', 'No taxonomy.'),
     ] }).find((projection) => projection.family === 'hub')!
 
-    expect(hub.slots.find((slot) => slot.slot_key === 'outputs')?.items).toEqual([])
-    expect(JSON.stringify(hub)).not.toContain('output:image')
+    expect(hub.slots.find((slot) => slot.slot_key === 'outputs')?.items).toEqual([
+      expect.objectContaining({ node_ref: 'output:image', href: '/en/prompts/image', edge_ref: expect.any(String) }),
+    ])
   })
 
   it('accepts released projection bytes only through the internal publication capability', () => {

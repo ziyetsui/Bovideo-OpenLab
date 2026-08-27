@@ -93,7 +93,7 @@ describe('pSEO shared frontend components', () => {
 
     expect(html).toContain('href="#page-content"')
     expect(html).toContain('<header')
-    expect(html).toContain('aria-label="Primary"')
+    expect(html).toContain('aria-label="Primary navigation"')
     expect(html).toContain('aria-label="Breadcrumb"')
     expect(html).toContain('<main id="page-content"')
     expect(html).toContain('<footer')
@@ -123,6 +123,36 @@ describe('pSEO shared frontend components', () => {
     expect(html).toContain('aria-label="Footer"')
     expect(html).toContain('href="/en/about-data"')
     expect(html).not.toContain('Footer navigation unavailable')
+  })
+
+  it('renders a reviewed noindex page edge as a real link', () => {
+    const html = renderToStaticMarkup(<NodeEdge item={{
+      label: 'Image prompts',
+      node_ref: 'output:image',
+      edge_ref: '00000000-0000-4000-8000-000000000901',
+      evidence_state: 'reviewed',
+      link_policy: 'link',
+      href: '/en/prompts/image',
+      render_target: 'page',
+      target_indexability: 'noindex',
+    }} />)
+
+    expect(html).toContain('href="/en/prompts/image"')
+    expect(html).toContain('data-target-indexability="noindex"')
+  })
+
+  it('renders projected media and copy bytes directly from a prompt card', () => {
+    const html = renderToStaticMarkup(<PromptCard card={{
+      prompt_ref: { id: 'prompt-media', type: 'artifact' },
+      title: 'Media prompt', summary: 'Source backed', tags: [],
+      prompt_text: 'Exact source prompt.', prompt_language: 'en', media: [remoteXEvidence],
+      evidence_state: 'reviewed', link_policy: 'link', href: '/en/prompts/media-prompt',
+      render_target: 'page', target_indexability: 'noindex',
+    }} mode="preview" />)
+
+    expect(html).toContain('pbs.twimg.com/media/evidence.jpg')
+    expect(html).toContain('Exact source prompt.')
+    expect(html).toContain('href="/en/prompts/media-prompt"')
   })
 
   it('switches exact locale-root routes as well as nested routes', () => {

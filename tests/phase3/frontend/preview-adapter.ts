@@ -199,6 +199,17 @@ const reviewedNode = (nodeRef: string): ProjectedSlot['items'][number] => ({
   target_indexability: 'none',
 })
 
+const reviewedPageNode = (nodeRef: string, label: string, href: string, edgeRef: string): ProjectedSlot['items'][number] => ({
+  node_ref: nodeRef,
+  edge_ref: edgeRef,
+  label,
+  evidence_state: 'reviewed',
+  link_policy: 'link',
+  href,
+  render_target: 'page',
+  target_indexability: 'noindex',
+})
+
 const qualifiedCard = ({ id, title, summary, href, tags }: Readonly<{
   id: string
   title: string
@@ -210,18 +221,21 @@ const qualifiedCard = ({ id, title, summary, href, tags }: Readonly<{
   title,
   summary,
   tags: tags.map((tag) => candidateFilter(tag) as ProjectedPromptCard['tags'][number]),
+  prompt_text: 'Use the supplied product at dusk.',
+  prompt_language: 'en',
+  media: [remotePreviewMediaEvidence],
   evidence_state: 'qualified',
   link_policy: 'link',
   href,
   render_target: 'page',
-  target_indexability: 'indexable',
+  target_indexability: 'noindex',
 })
 
 const detailRoute = routes.detail
 
 const slotsByFamily: Record<keyof typeof routes, ProjectedSlot[]> = {
   hub: [
-    { slot_key: 'outputs', renderer: 'facet', source_mode: 'graph_query', items: [candidateFilter('image-output')] },
+    { slot_key: 'outputs', renderer: 'facet', source_mode: 'graph_query', items: [reviewedPageNode('output:image', 'Image prompts', routes.gallery, '00000000-0000-4000-8000-000000000721')] },
     { slot_key: 'use_cases', renderer: 'facet', source_mode: 'graph_query', items: [candidateFilter('campaign')] },
     { slot_key: 'featured', renderer: 'shelf', source_mode: 'content_envelope', items: [qualifiedCard({
       id: '00000000-0000-4000-8000-000000000801',
@@ -235,6 +249,7 @@ const slotsByFamily: Record<keyof typeof routes, ProjectedSlot[]> = {
     { slot_key: 'use_cases', renderer: 'facet', source_mode: 'graph_query', items: [candidateFilter('campaign')] },
     { slot_key: 'styles', renderer: 'facet', source_mode: 'graph_query', items: [candidateFilter('editorial')] },
     { slot_key: 'subjects', renderer: 'facet', source_mode: 'graph_query', items: [candidateFilter('portrait')] },
+    { slot_key: 'models', renderer: 'shelf', source_mode: 'graph_query', items: [reviewedPageNode('model:example-model', 'Example model', routes.entity, '00000000-0000-4000-8000-000000000722')] },
     { slot_key: 'featured', renderer: 'shelf', source_mode: 'content_envelope', items: [qualifiedCard({
       id: '00000000-0000-4000-8000-000000000802',
       title: 'Editorial campaign portrait',
@@ -253,7 +268,13 @@ const slotsByFamily: Record<keyof typeof routes, ProjectedSlot[]> = {
     })] },
     { slot_key: 'related', renderer: 'mesh', source_mode: 'graph_query', items: [reviewedNode('related-model')] },
   ],
-  detail: [],
+  detail: [{ slot_key: 'prompt', renderer: 'detail', source_mode: 'content_envelope', items: [qualifiedCard({
+    id: '00000000-0000-4000-8000-000000000803',
+    title: 'Cinematic product shot',
+    summary: 'A source-backed prompt detail.',
+    href: detailRoute,
+    tags: [],
+  })] }],
 }
 
 const projectionFor = (family: keyof typeof routes): PageProjection => {

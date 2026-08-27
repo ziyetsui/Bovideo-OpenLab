@@ -30,7 +30,7 @@ const registry = createModuleRegistry()
 describe('P3-T06 module generators', () => {
   it('preserves Prompt bytes and requires redistribution rights for public output', async () => {
     const originalText = 'Keep  two spaces, a newline\n, and punctuation exactly.'
-    const module = await registry.generate('prompt', {
+    const generatedModule = await registry.generate('prompt', {
       envelope: envelope('00000000-0000-4000-8000-000000000201'),
       originalText,
       sourceRef: SOURCE,
@@ -38,11 +38,11 @@ describe('P3-T06 module generators', () => {
       variationOf: null,
     })
 
-    expect(pageModuleSchema.safeParse(module).success).toBe(true)
-    if (module.module_type !== 'prompt') throw new Error('expected prompt module')
-    expect(module.payload.original_text).toBe(originalText)
-    expect(module.payload.token_integrity_hash).toBe(hash(originalText))
-    expect(() => assertModulePublishable({ ...module, review_state: 'approved', rights_state: 'metadata_only' })).toThrow(/redistribution/i)
+    expect(pageModuleSchema.safeParse(generatedModule).success).toBe(true)
+    if (generatedModule.module_type !== 'prompt') throw new Error('expected prompt module')
+    expect(generatedModule.payload.original_text).toBe(originalText)
+    expect(generatedModule.payload.token_integrity_hash).toBe(hash(originalText))
+    expect(() => assertModulePublishable({ ...generatedModule, review_state: 'approved', rights_state: 'metadata_only' })).toThrow(/redistribution/i)
   })
 
   it('fails closed for a UGC case without explicit authorization', async () => {
@@ -63,23 +63,23 @@ describe('P3-T06 module generators', () => {
       steps: [{ selector: '#submit', action: 'click', assertion: 'result is visible', result: 'passed', screenshotRef: null, piiRedacted: true, thirdPartyUiAuthorized: true }],
     })).rejects.toMatchObject({ name: 'GenerationBlockedError', code: 'tutorial_screenshot_evidence_required' })
 
-    const module = await registry.generate('tutorial', {
+    const generatedModule = await registry.generate('tutorial', {
       envelope: envelope('00000000-0000-4000-8000-000000000204'),
       applicationVersion: '1.2.3',
       steps: [{ selector: '#submit', action: 'click', assertion: 'result is visible', result: 'passed', screenshotRef: SCREENSHOT, piiRedacted: true, thirdPartyUiAuthorized: true }],
     })
-    expect(pageModuleSchema.safeParse(module).success).toBe(true)
+    expect(pageModuleSchema.safeParse(generatedModule).success).toBe(true)
 
-    if (module.module_type !== 'tutorial') throw new Error('expected tutorial module')
+    if (generatedModule.module_type !== 'tutorial') throw new Error('expected tutorial module')
     expect(() => assertModulePublishable({
-      ...module,
+      ...generatedModule,
       review_state: 'approved',
-      payload: { ...module.payload, steps: [{ ...module.payload.steps[0]!, screenshot_ref: null }] },
+      payload: { ...generatedModule.payload, steps: [{ ...generatedModule.payload.steps[0]!, screenshot_ref: null }] },
     })).toThrow(/screenshot/i)
   })
 
   it('requires cited comparison facts and leaves generated synthesis pending human factual review', async () => {
-    const module = await registry.generate('comparison', {
+    const generatedModule = await registry.generate('comparison', {
       envelope: envelope('00000000-0000-4000-8000-000000000205'),
       dimensions: [{
         dimension: 'Price',
@@ -89,10 +89,10 @@ describe('P3-T06 module generators', () => {
       }],
     })
 
-    if (module.module_type !== 'comparison') throw new Error('expected comparison module')
-    expect(module.payload.factual_reviewed).toBe(false)
-    expect(module.review_state).toBe('candidate')
-    expect(() => assertModulePublishable({ ...module, review_state: 'approved' })).toThrow('comparison facts require factual review')
+    if (generatedModule.module_type !== 'comparison') throw new Error('expected comparison module')
+    expect(generatedModule.payload.factual_reviewed).toBe(false)
+    expect(generatedModule.review_state).toBe('candidate')
+    expect(() => assertModulePublishable({ ...generatedModule, review_state: 'approved' })).toThrow('comparison facts require factual review')
   })
 
   it('requires FAQ answer sources and demand evidence without generating a fallback answer', async () => {
