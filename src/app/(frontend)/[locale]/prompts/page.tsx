@@ -7,6 +7,8 @@ import { FrontendPageRouteView } from '@/page/route-view'
 import { resolveFrontendRoute } from '../../../../../frontend/routes/resolve-active-projection'
 
 type Params = Readonly<{ locale: string }>
+export const dynamic = 'force-dynamic'
+
 const readProjection = async (locale: string) => {
   const parsed = applicationLocaleSchema.safeParse(locale)
   return parsed.success

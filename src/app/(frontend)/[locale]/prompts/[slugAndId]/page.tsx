@@ -8,6 +8,7 @@ import { resolveFrontendRoute } from '../../../../../../frontend/routes/resolve-
 
 export type DetailRouteParams = Readonly<{ locale: string; slugAndId: string }>
 
+export const dynamic = 'force-dynamic'
 export const generateStaticParams = (): DetailRouteParams[] => []
 
 const readProjection = async (params: DetailRouteParams) => {

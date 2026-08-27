@@ -21,6 +21,12 @@ describe('pSEO frontend production route integration', () => {
     expect(source).not.toContain('LOCAL_DETAIL_PAGES')
   })
 
+  it.each(ROUTES)('marks %s as request-time rendered because it reads a live Payload publication', async (route) => {
+    const source = await readFile(route, 'utf8')
+
+    expect(source).toContain("export const dynamic = 'force-dynamic'")
+  })
+
   it('refuses to select an arbitrary released projection without a bound active-publication reader', async () => {
     await expect(resolveFrontendRoute({
       locale: 'en',
