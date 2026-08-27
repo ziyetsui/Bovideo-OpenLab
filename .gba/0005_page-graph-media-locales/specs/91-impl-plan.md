@@ -1,6 +1,6 @@
 # Page graph, media, and locales implementation plan
 
-Status: In progress · Date: 2026-08-27
+Status: Complete · Date: 2026-08-28
 
 **Goal:** Ship one complete active release whose four page families are connected,
 media-backed, and usable through all 16 locale routes.
@@ -40,12 +40,12 @@ media-backed, and usable through all 16 locale routes.
 - [x] Deploy backward-compatible reader/schema changes.
 - [x] Implement candidate-staged, revision-CAS and PostgreSQL parent/relationship-row-locked taxonomy ingress with
   immutable review evidence and fault/zero-write retry tests.
-- [ ] Ingest the reviewed Higgsfield taxonomy manifest and backfill exact Payload
+- [x] Ingest the reviewed Higgsfield taxonomy manifest and backfill exact Payload
   relationships for the 1,043 target artifacts.
-- [ ] Promote eligible preview media, generate the complete corpus, reconcile counts,
+- [x] Promote eligible preview media, generate the complete corpus, reconcile counts,
   and activate the new version.
-- [ ] Browser-test the four-hop path, visible media and all 16 locale Hub routes.
-- [ ] Run independent phase review, resolve findings, commit and push.
+- [x] Browser-test the four-hop path, visible media and all 16 locale Hub routes.
+- [x] Run independent phase review, resolve findings, commit and push.
 
 ## Exit condition
 
