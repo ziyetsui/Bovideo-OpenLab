@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: bovideo-openlab-p1v
+    runtime: node
+    plan: free
+    autoDeploy: false
+    buildCommand: pnpm install --frozen-lockfile && pnpm run build
+    startCommand: pnpm start
+    healthCheckPath: /readyz
+    envVars:
+      - key: NODE_VERSION
+        value: 24.19.0
+      - key: PAYLOAD_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        sync: false
+      - key: DB_POOL_MAX
+        value: "5"
+      - key: PAYLOAD_DB_PUSH
+        value: "false"
+      - key: P1V_RUNTIME
+        value: "true"

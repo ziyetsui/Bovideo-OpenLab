@@ -1,0 +1,24 @@
+{
+  "content_id": "synthetic-product-video-guide",
+  "source_locale": "en",
+  "rights_basis": "Synthetic first-party example released with this repository.",
+  "index_state": "discoverable_noindex",
+  "variants": [
+    { "locale": "en", "title": "Create an AI product video", "summary": "A synthetic example for validating the multilingual content contract." },
+    { "locale": "zh-CN", "title": "创建 AI 产品视频", "summary": "用于验证多语言内容契约的合成示例。" },
+    { "locale": "zh-TW", "title": "建立 AI 產品影片", "summary": "用於驗證多語言內容契約的合成範例。" },
+    { "locale": "ja-JP", "title": "AI 商品動画を作成する", "summary": "多言語コンテンツ契約を検証するための合成サンプルです。" },
+    { "locale": "ko-KR", "title": "AI 제품 동영상 만들기", "summary": "다국어 콘텐츠 계약을 검증하기 위한 합성 예시입니다." },
+    { "locale": "de-DE", "title": "Ein KI-Produktvideo erstellen", "summary": "Ein synthetisches Beispiel zur Prüfung des mehrsprachigen Inhaltsvertrags." },
+    { "locale": "fr-FR", "title": "Créer une vidéo produit avec l’IA", "summary": "Un exemple synthétique pour valider le contrat de contenu multilingue." },
+    { "locale": "it-IT", "title": "Creare un video di prodotto con l’IA", "summary": "Un esempio sintetico per verificare il contratto dei contenuti multilingue." },
+    { "locale": "es-ES", "title": "Crear un vídeo de producto con IA", "summary": "Un ejemplo sintético para validar el contrato de contenido multilingüe." },
+    { "locale": "es-419", "title": "Crear un video de producto con IA", "summary": "Un ejemplo sintético para validar el contrato de contenido multilingüe." },
+    { "locale": "pt-BR", "title": "Criar um vídeo de produto com IA", "summary": "Um exemplo sintético para validar o contrato de conteúdo multilíngue." },
+    { "locale": "pt-PT", "title": "Criar um vídeo de produto com IA", "summary": "Um exemplo sintético para validar o contrato de conteúdos multilingue." },
+    { "locale": "hi-IN", "title": "AI उत्पाद वीडियो बनाएँ", "summary": "बहुभाषी सामग्री अनुबंध की जाँच के लिए एक कृत्रिम उदाहरण।" },
+    { "locale": "th-TH", "title": "สร้างวิดีโอสินค้าด้วย AI", "summary": "ตัวอย่างสังเคราะห์สำหรับตรวจสอบสัญญาเนื้อหาหลายภาษา" },
+    { "locale": "tr-TR", "title": "Yapay zekâ ile ürün videosu oluşturun", "summary": "Çok dilli içerik sözleşmesini doğrulamak için sentetik bir örnek." },
+    { "locale": "vi-VN", "title": "Tạo video sản phẩm bằng AI", "summary": "Ví dụ tổng hợp để xác thực hợp đồng nội dung đa ngôn ngữ." }
+  ]
+}

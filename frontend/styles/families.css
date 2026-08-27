@@ -1,0 +1,331 @@
+.page-family {
+  width: min(100%, var(--content-width));
+  margin-inline: auto;
+  padding: var(--space-4);
+  overflow: clip;
+}
+
+.page-family > section,
+.family-footer {
+  min-width: 0;
+  margin-block: var(--space-6);
+}
+
+.family-hero,
+.family-search,
+.family-axes,
+.family-results,
+.family-stats,
+.family-generation-chrome,
+.family-qualification,
+.family-cta,
+.family-footer {
+  border: var(--border-minor) solid var(--color-ink);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-4);
+  padding: var(--space-4);
+}
+
+.family-hero {
+  background: var(--color-yellow);
+}
+
+.page-family--gallery .family-hero {
+  background: var(--color-red);
+  color: var(--color-surface);
+}
+
+.page-family--entity .family-hero {
+  background: var(--color-blue);
+  color: var(--color-surface);
+}
+
+.family-hero > :first-child,
+.family-shelf h2,
+.family-facet h2,
+.family-cta h2 {
+  margin-top: 0;
+}
+
+.family-hero p,
+.family-search p,
+.family-axes p,
+.family-results p,
+.family-cta p,
+.family-empty {
+  margin-bottom: 0;
+}
+
+.family-search {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.family-search input,
+.family-generation-chrome input {
+  min-width: 0;
+  width: 100%;
+  border: var(--border-minor) solid var(--color-ink);
+  border-radius: var(--radius-square);
+  background: var(--color-canvas);
+  color: var(--color-muted);
+  padding: var(--space-3);
+}
+
+.family-axes,
+.family-results,
+.family-residual {
+  border-left: var(--border-major) solid var(--color-red);
+  padding-left: var(--space-4);
+}
+
+.family-axis {
+  min-width: 0;
+  margin-top: var(--space-4);
+}
+
+.family-axis h3 {
+  margin-bottom: var(--space-2);
+}
+
+.family-axis ul,
+.family-residual ul,
+.family-results ul {
+  display: flex;
+  gap: var(--space-2);
+  min-width: 0;
+  overflow-x: auto;
+  margin: 0;
+  padding: 0 0 var(--space-2);
+  list-style: none;
+}
+
+.family-axis li,
+.family-residual li,
+.family-results li {
+  display: grid;
+  flex: 0 0 min(72vw, 16rem);
+  gap: var(--space-2);
+  border: var(--border-minor) solid var(--color-ink);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-4);
+  padding: var(--space-3);
+}
+
+.family-axis button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  padding: 0;
+  text-align: left;
+}
+
+.family-axis button[aria-pressed='true'] {
+  color: var(--color-blue);
+  text-decoration: underline;
+}
+
+.family-evidence-label {
+  display: block;
+  color: var(--color-muted);
+  font-size: 0.875rem;
+  font-weight: 700;
+}
+
+.family-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  border: var(--border-minor) solid var(--color-ink);
+  padding: var(--space-4);
+}
+
+.family-pagination a {
+  color: var(--color-blue);
+  font-weight: 700;
+}
+
+.family-shelf,
+.family-facet {
+  min-width: 0;
+  border-block: var(--border-minor) solid var(--color-ink);
+  padding-block: var(--space-4);
+}
+
+.family-shelf ul,
+.family-facet ul {
+  display: flex;
+  gap: var(--space-3);
+  min-width: 0;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  margin: 0;
+  padding: 0 0 var(--space-2);
+  list-style: none;
+  scrollbar-width: thin;
+}
+
+.family-shelf li,
+.family-facet li {
+  flex: 0 0 min(82vw, 19rem);
+  border: var(--border-minor) solid var(--color-ink);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-4);
+  padding: var(--space-4);
+  overflow-wrap: anywhere;
+}
+
+.family-facet button {
+  width: 100%;
+  border: 0;
+  border-radius: var(--radius-square);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.family-facet button[aria-pressed='true'] {
+  color: var(--color-red);
+  text-decoration: underline;
+}
+
+.family-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.family-stats strong {
+  grid-column: 1 / -1;
+  font-family: var(--font-display);
+  font-size: 3rem;
+  line-height: 1;
+}
+
+.family-generation-chrome {
+  display: grid;
+  gap: var(--space-2);
+  background: var(--color-muted);
+  color: var(--color-surface);
+}
+
+.family-generation-chrome input {
+  background: var(--color-surface);
+}
+
+.family-qualification[data-qualification='unqualified'] {
+  border-color: var(--color-red);
+  background: var(--color-yellow);
+}
+
+.family-qualification ul {
+  margin-bottom: 0;
+  padding-left: var(--space-5);
+}
+
+.family-footer {
+  margin-bottom: var(--space-4);
+  background: var(--color-ink);
+  color: var(--color-surface);
+}
+
+@media (min-width: 48rem) {
+  .page-family {
+    padding: var(--space-6);
+  }
+
+  .family-hero,
+  .family-search,
+  .family-axes,
+  .family-results,
+  .family-stats,
+  .family-generation-chrome,
+  .family-qualification,
+  .family-cta,
+  .family-footer {
+    border-width: var(--border-major);
+    box-shadow: var(--shadow-6);
+    padding: var(--space-5);
+  }
+
+  .family-shelf li,
+  .family-facet li,
+  .family-axis li,
+  .family-residual li {
+    flex-basis: min(42vw, 22rem);
+  }
+
+  .family-results li {
+    flex-basis: min(42vw, 22rem);
+  }
+
+  .family-stats {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 90rem) {
+  .page-family {
+    padding: var(--space-7);
+  }
+
+  .page-family--hub .family-hero,
+  .page-family--gallery .family-hero,
+  .page-family--entity .family-hero {
+    min-height: 20rem;
+    display: grid;
+    align-content: space-between;
+  }
+
+  .family-shelf ul,
+  .family-facet ul,
+  .family-axis ul,
+  .family-residual ul {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    overflow-x: visible;
+  }
+
+
+  .family-results ul {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    overflow-x: visible;
+  }
+
+  .family-shelf li,
+  .family-facet li,
+  .family-axis li,
+  .family-residual li {
+    min-width: 0;
+  }
+
+
+  .family-results li {
+    min-width: 0;
+  }
+
+  .family-stats {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .family-stats strong {
+    grid-column: auto;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .family-shelf li,
+  .family-facet li,
+  .family-facet button {
+    transition: transform var(--motion-fast) ease-out, box-shadow var(--motion-fast) ease-out;
+  }
+
+  .family-shelf li:hover,
+  .family-facet li:hover {
+    box-shadow: var(--shadow-6);
+    transform: translate(-2px, -2px);
+  }
+}

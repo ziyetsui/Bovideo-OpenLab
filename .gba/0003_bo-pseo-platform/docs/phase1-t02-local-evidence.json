@@ -1,0 +1,35 @@
+{
+  "task": "P1-T02",
+  "scope": "Payload access, schema, RBAC and audit",
+  "status": "LOCAL_REQUIREMENTS_GREEN",
+  "review_status": "CLEAN",
+  "unresolved_finding_count": 0,
+  "p1v_status": "NOT_RUN_REQUIRED_REMOTE",
+  "remote_mutations": false,
+  "required_local_checks": {
+    "physical_crud_matrix_cells": 1584,
+    "access_matrix": "PASS 51/51",
+    "payload_postgres_matrix": "PASS 27/27",
+    "contracts": "PASS 226/226",
+    "integration": "PASS 38/38",
+    "preview": "PASS 89/89",
+    "typecheck": "PASS",
+    "lint": "PASS",
+    "diff_check": "PASS"
+  },
+  "acceptance": {
+    "AC-CMS-001_to_008": "LOCAL_PASS",
+    "AC-CMS-009": "NOT_RUN_REQUIRED_REMOTE",
+    "AC-CMS-010": "LOCAL_PASS",
+    "AC-SEC-002": "LOCAL_PASS",
+    "AC-SEC-003": "LOCAL_PASS",
+    "AC-P1V-PG-001": "NOT_RUN_REQUIRED_REMOTE",
+    "AC-P1V-PG-003": "NOT_RUN_REQUIRED_REMOTE",
+    "AC-P1V-PG-004": "NOT_RUN_REQUIRED_REMOTE"
+  },
+  "companion_tests": [
+    "tests/phase1/access/handler-matrix.payload.int.spec.ts",
+    "tests/phase1/access/payload-routes.payload.int.spec.ts"
+  ],
+  "residual_verification": "Approved remote Render/Neon P1-V execution is required for AC-CMS-009 and AC-P1V-PG-001/003/004; it was not run."
+}

@@ -1,0 +1,36 @@
+:root {
+  --color-canvas: #F0F0F0;
+  --color-ink: #121212;
+  --color-red: #D02020;
+  --color-blue: #1040C0;
+  --color-yellow: #F0C020;
+  --color-surface: #FFFFFF;
+  --color-muted: #5C5C5C;
+  --color-action: var(--color-blue);
+  --color-status: var(--color-yellow);
+  --color-focus: var(--color-blue);
+  --font-display: 'Outfit Variable', Outfit, system-ui, sans-serif;
+  --font-body: 'Outfit Variable', Outfit, system-ui, sans-serif;
+  --border-minor: 2px;
+  --border-major: 4px;
+  --border-thin: var(--border-minor);
+  --border-heavy: var(--border-major);
+  --shadow-4: 4px 4px 0 var(--color-ink);
+  --shadow-6: 6px 6px 0 var(--color-ink);
+  --shadow-8: 8px 8px 0 var(--color-ink);
+  --radius-square: 0;
+  --radius-round: 9999px;
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+  --space-8: 4rem;
+  --space-9: 6rem;
+  --content-width: 80rem;
+  --display-size: clamp(2.5rem, 7vw, 6.5rem);
+  --motion-fast: 200ms;
+  --motion-slow: 300ms;
+}

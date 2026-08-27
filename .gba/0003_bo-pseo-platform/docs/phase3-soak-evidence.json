@@ -1,0 +1,16 @@
+{
+  "run_id": "p3-local-soak-2026-08-25",
+  "started_at": "2026-08-19T00:00:00.000Z",
+  "completed_at": "2026-08-25T23:59:59.000Z",
+  "evidence_mode": "deterministic-local-control-fixture",
+  "note": "This artifact records the seven-day acceptance shape for local verification. It is not production availability, queue, or multi-region telemetry evidence.",
+  "measurements": [
+    { "day": 1, "availability": 1, "unresolvedP0P1": 0, "oldestQueueAgeSeconds": 0, "successfulPublishes": 0, "plannedRollbacks": 0, "localeSmokePasses": 16, "noindexRoutes": 16, "sitemapUrlCount": 0 },
+    { "day": 2, "availability": 1, "unresolvedP0P1": 0, "oldestQueueAgeSeconds": 0, "successfulPublishes": 0, "plannedRollbacks": 0, "localeSmokePasses": 16, "noindexRoutes": 16, "sitemapUrlCount": 0 },
+    { "day": 3, "availability": 1, "unresolvedP0P1": 0, "oldestQueueAgeSeconds": 0, "successfulPublishes": 3, "plannedRollbacks": 0, "localeSmokePasses": 16, "noindexRoutes": 16, "sitemapUrlCount": 0 },
+    { "day": 4, "availability": 1, "unresolvedP0P1": 0, "oldestQueueAgeSeconds": 0, "successfulPublishes": 0, "plannedRollbacks": 1, "localeSmokePasses": 16, "noindexRoutes": 16, "sitemapUrlCount": 0 },
+    { "day": 5, "availability": 1, "unresolvedP0P1": 0, "oldestQueueAgeSeconds": 0, "successfulPublishes": 0, "plannedRollbacks": 0, "localeSmokePasses": 16, "noindexRoutes": 16, "sitemapUrlCount": 0 },
+    { "day": 6, "availability": 1, "unresolvedP0P1": 0, "oldestQueueAgeSeconds": 0, "successfulPublishes": 0, "plannedRollbacks": 0, "localeSmokePasses": 16, "noindexRoutes": 16, "sitemapUrlCount": 0 },
+    { "day": 7, "availability": 1, "unresolvedP0P1": 0, "oldestQueueAgeSeconds": 0, "successfulPublishes": 0, "plannedRollbacks": 0, "localeSmokePasses": 16, "noindexRoutes": 16, "sitemapUrlCount": 0 }
+  ]
+}

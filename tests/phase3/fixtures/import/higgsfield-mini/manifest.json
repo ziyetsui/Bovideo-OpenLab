@@ -1,0 +1,7 @@
+{
+  "run_id": "fixture-run",
+  "output_sha256": {
+    "normalized_posts.jsonl": "abea80ad013247a5dec89ac8d2f792c918a68665cf2a05aec3dc97474b102d33",
+    "media_refs.jsonl": "50abc1f9deb91678b8a95b58ac581ad236e9750f7aed4a9e015471a7e6f2612d"
+  }
+}

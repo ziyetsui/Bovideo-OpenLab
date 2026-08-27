@@ -1,0 +1,51 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "main": ".open-next/worker.js",
+  "name": "bovideo-openlab-local",
+  "workers_dev": false,
+  "compatibility_date": "2025-08-15",
+  "compatibility_flags": [
+    "nodejs_compat",
+    "global_fetch_strictly_public"
+  ],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "d1_databases": [
+    {
+      "binding": "D1"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "R2"
+    }
+  ],
+  "secrets": {
+    "required": [
+      "PAYLOAD_SECRET"
+    ]
+  },
+  "env": {
+    "preview": {
+      "name": "bovideo-openlab-preview",
+      "workers_dev": true,
+      "d1_databases": [
+        {
+          "binding": "D1"
+        }
+      ],
+      "r2_buckets": [
+        {
+          "binding": "R2"
+        }
+      ],
+      "secrets": {
+        "required": [
+          "PAYLOAD_SECRET"
+        ]
+      }
+    }
+  }
+}
