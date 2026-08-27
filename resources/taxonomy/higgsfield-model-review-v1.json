@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "review_id": "higgsfield-model-review-v1",
+  "reviewed_at": "2026-08-27T13:50:00.000Z",
+  "evidence_refs": [
+    "assets/higgsfield-x-prompts-2026-08-20-twitter241/manifest.json",
+    "assets/higgsfield-x-prompts-2026-08-20-twitter241/README.md",
+    "assets/higgsfield-x-prompts-2026-08-20/"
+  ],
+  "assignments": [
+    {
+      "node_type": "model",
+      "stable_key": "model:higgsfield",
+      "label": "Higgsfield",
+      "description": "Reviewed model scope for the two imported Higgsfield X prompt snapshots.",
+      "promotion_state": "reviewed",
+      "target_source_versions": [
+        "sha256:v1:0ddadea23a8dcee6d91269d0ded4086502be6035f87c57598194674f2b640f1b",
+        "sha256:v1:94ed9bc01f94836cedbf1bb88fc1b5a489698833c5823038e92f070d0cf01670"
+      ],
+      "expected_artifact_count": 1043
+    }
+  ]
+}

@@ -3,18 +3,299 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-import { artifactsFromPayload, loadReviewedXMediaAllowlist, nextLocalProjectionPublishVersion, parseLocalProjectionPublishArgs, planLocalPointerActivation, promoteEligibleXPreviewMedia, publishLocalPseoProjections } from '../../../scripts/generate-local-pseo-projections'
+import { applyReviewedTaxonomyManifest, artifactsFromPayload, loadReviewedTaxonomyManifest, loadReviewedXMediaAllowlist, nextLocalProjectionPublishVersion, parseLocalProjectionPublishArgs, planLocalPointerActivation, promoteEligibleXPreviewMedia, publishLocalPseoProjections } from '../../../scripts/generate-local-pseo-projections'
 
 describe('local projection publication command', () => {
   it('accepts an explicit locale and rejects arbitrary publication arguments', () => {
-    expect(parseLocalProjectionPublishArgs(['--locale', 'en', '--concurrency', '4'])).toEqual({ locale: 'en', concurrency: 4, promoteXPreviewMedia: false, reviewedMediaManifest: undefined })
-    expect(parseLocalProjectionPublishArgs(['--promote-x-preview-media', '--reviewed-media-manifest', '/private/reviewed.jsonl'])).toEqual({ locale: 'en', concurrency: 8, promoteXPreviewMedia: true, reviewedMediaManifest: '/private/reviewed.jsonl' })
-    expect(parseLocalProjectionPublishArgs([])).toEqual({ locale: 'en', concurrency: 8, promoteXPreviewMedia: false, reviewedMediaManifest: undefined })
+    expect(parseLocalProjectionPublishArgs(['--locale', 'en', '--concurrency', '4'])).toEqual({ locale: 'en', concurrency: 4, promoteXPreviewMedia: false, reviewedMediaManifest: undefined, reviewedTaxonomyManifest: undefined })
+    expect(parseLocalProjectionPublishArgs(['--promote-x-preview-media', '--reviewed-media-manifest', 'reviewed.jsonl', '--reviewed-taxonomy-manifest', 'taxonomy.json'])).toEqual({ locale: 'en', concurrency: 8, promoteXPreviewMedia: true, reviewedMediaManifest: 'reviewed.jsonl', reviewedTaxonomyManifest: 'taxonomy.json' })
+    expect(parseLocalProjectionPublishArgs([])).toEqual({ locale: 'en', concurrency: 8, promoteXPreviewMedia: false, reviewedMediaManifest: undefined, reviewedTaxonomyManifest: undefined })
     expect(() => parseLocalProjectionPublishArgs(['--locale', 'xx'])).toThrow(/locale/i)
     expect(() => parseLocalProjectionPublishArgs(['--locale', 'zh-CN'])).toThrow(/source projection.*en only/i)
     expect(() => parseLocalProjectionPublishArgs(['--concurrency', '17'])).toThrow(/concurrency/i)
-    expect(() => parseLocalProjectionPublishArgs(['--reviewed-media-manifest', '/private/reviewed.jsonl'])).toThrow(/promote/i)
+    expect(() => parseLocalProjectionPublishArgs(['--reviewed-media-manifest', 'reviewed.jsonl'])).toThrow(/promote/i)
+    expect(() => parseLocalProjectionPublishArgs(['--reviewed-taxonomy-manifest'])).toThrow(/requires/i)
     expect(() => parseLocalProjectionPublishArgs(['--publish-version', '1'])).toThrow(/unknown/i)
+  })
+
+  it('loads exact reviewed taxonomy assignments and links only their counted source-version scope', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'bo-reviewed-taxonomy-'))
+    const manifestPath = join(directory, 'taxonomy.json')
+    const sourceVersion = `sha256:v1:${'a'.repeat(64)}`
+    const writes: Record<string, unknown>[] = []
+    try {
+      await writeFile(manifestPath, JSON.stringify({
+        schema_version: 1,
+        review_id: 'fixture-review-v1',
+        reviewed_at: '2026-08-27T00:00:00.000Z',
+        evidence_refs: ['private/reviews/fixture-v1'],
+        assignments: [{
+          node_type: 'model', stable_key: 'model:higgsfield', label: 'Higgsfield',
+          description: 'Reviewed fixture model.', promotion_state: 'reviewed',
+          target_source_versions: [sourceVersion], expected_artifact_count: 2,
+        }],
+      }))
+      const manifest = await loadReviewedTaxonomyManifest(manifestPath)
+      let createdID = 40
+      const promptDocuments = [
+        { id: 10, revision: 1, updatedAt: '2026-08-27T00:00:00.000Z', source_version: sourceVersion, source: 101, model_refs: [7], taxonomy_refs: [8] },
+        { id: 11, revision: 1, updatedAt: '2026-08-27T00:00:00.000Z', source_version: sourceVersion, source: 102, model_refs: [], taxonomy_refs: [] },
+      ]
+      let taxonomyNode: Record<string, unknown> | undefined
+      const auditEvents: Record<string, unknown>[] = []
+      const payload = {
+        async find(input: Record<string, unknown>) {
+          if (input.collection === 'taxonomy-nodes') return { docs: taxonomyNode === undefined ? [] : [taxonomyNode] }
+          if (input.collection === 'prompt-artifacts') return { docs: promptDocuments }
+          if (input.collection === 'audit-events') return { docs: auditEvents }
+          return { docs: [] }
+        },
+        async create(input: Record<string, unknown>) {
+          writes.push(input)
+          createdID += 1
+          const created = { id: createdID, ...(input.data as object) }
+          if (input.collection === 'taxonomy-nodes') taxonomyNode = created
+          if (input.collection === 'audit-events') auditEvents.push(created)
+          return created
+        },
+        async update(input: Record<string, unknown>) {
+          writes.push(input)
+          if (input.collection === 'taxonomy-nodes') {
+            taxonomyNode = { ...taxonomyNode, ...(input.data as object) }
+            return taxonomyNode
+          }
+          const document = promptDocuments.find((candidate) => candidate.id === input.id)!
+          Object.assign(document, input.data, { updatedAt: `2026-08-27T00:00:0${document.id}.000Z` })
+          return document
+        },
+        async findByID(input: Record<string, unknown>) {
+          if (input.collection === 'taxonomy-nodes') return taxonomyNode!
+          return promptDocuments.find((candidate) => candidate.id === input.id)!
+        },
+      }
+
+      await expect(applyReviewedTaxonomyManifest(payload as never, manifest, 2, () => ({ review: 'fixture' }))).resolves.toEqual({
+        createdNodeCount: 1, updatedNodeCount: 0, linkedArtifactCount: 2,
+      })
+      expect(writes.find((write) => write.collection === 'taxonomy-nodes' && (write.data as Record<string, unknown>).promotion_state === 'candidate')).toMatchObject({
+        data: { node_type: 'model', stable_key: 'model:higgsfield', promotion_state: 'candidate', inventory_count: 2 },
+      })
+      expect(writes.find((write) => write.collection === 'taxonomy-nodes' && (write.data as Record<string, unknown>).promotion_state === 'reviewed')).toMatchObject({
+        data: { promotion_state: 'reviewed', inventory_count: 2 },
+      })
+      expect(writes.filter((write) => write.collection === 'prompt-artifacts').map((write) => write.data)).toEqual([
+        expect.objectContaining({ model_refs: [7, 41], taxonomy_refs: [8], revision: 2 }),
+        expect.objectContaining({ model_refs: [41], taxonomy_refs: [], revision: 2 }),
+      ])
+      expect(writes.find((write) => write.collection === 'audit-events')).toMatchObject({
+        data: { event_type: 'taxonomy.review.accepted', new_state: expect.objectContaining({ review_id: 'fixture-review-v1', evidence_refs: ['private/reviews/fixture-v1'] }) },
+      })
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects unreviewed taxonomy manifests before any Payload write', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'bo-unreviewed-taxonomy-'))
+    const manifestPath = join(directory, 'taxonomy.json')
+    try {
+      await writeFile(manifestPath, JSON.stringify({
+        schema_version: 1, review_id: 'candidate-fixture', reviewed_at: '2026-08-27T00:00:00.000Z',
+        evidence_refs: ['private/reviews/candidate'], assignments: [{
+          node_type: 'model', stable_key: 'model:higgsfield', label: 'Higgsfield', promotion_state: 'candidate',
+          target_source_versions: [`sha256:v1:${'a'.repeat(64)}`], expected_artifact_count: 1,
+        }],
+      }))
+      await expect(loadReviewedTaxonomyManifest(manifestPath)).rejects.toThrow(/reviewed taxonomy manifest/i)
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('performs zero CMS writes when the exact reviewed taxonomy ingress is already complete', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'bo-complete-taxonomy-'))
+    const manifestPath = join(directory, 'taxonomy.json')
+    const sourceVersion = `sha256:v1:${'b'.repeat(64)}`
+    try {
+      await writeFile(manifestPath, JSON.stringify({
+        schema_version: 1, review_id: 'complete-fixture-v1', reviewed_at: '2026-08-27T00:00:00.000Z',
+        evidence_refs: ['reviews/complete-fixture-v1'], assignments: [{
+          node_type: 'model', stable_key: 'model:higgsfield', label: 'Higgsfield', description: 'Complete fixture.',
+          promotion_state: 'reviewed', target_source_versions: [sourceVersion], expected_artifact_count: 1,
+        }],
+      }))
+      const manifest = await loadReviewedTaxonomyManifest(manifestPath)
+      const node = {
+        id: 41, stable_id: '00000000-0000-5000-8000-000000000041', source_version: manifest.sourceHash,
+        status: 'active', node_type: 'model', stable_key: 'model:higgsfield', label: 'Higgsfield',
+        description: 'Complete fixture.', promotion_state: 'reviewed', inventory_count: 1, evidence_refs: [101],
+      }
+      const artifact = { id: 10, source_version: sourceVersion, source: 101, model_refs: [41], taxonomy_refs: [] }
+      const payload = {
+        async find(input: Record<string, unknown>) {
+          if (input.collection === 'taxonomy-nodes') return { docs: [node] }
+          if (input.collection === 'prompt-artifacts') return { docs: [artifact] }
+          if (input.collection === 'audit-events') return { docs: [{ event_id: 'existing-review-event' }] }
+          return { docs: [] }
+        },
+        async create() { throw new Error('unexpected create') },
+        async update() { throw new Error('unexpected update') },
+        async findByID() { throw new Error('unexpected findByID') },
+      }
+
+      await expect(applyReviewedTaxonomyManifest(payload as never, manifest, 2)).resolves.toEqual({
+        createdNodeCount: 0, updatedNodeCount: 0, linkedArtifactCount: 1,
+      })
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('locks each prompt artifact row before reading and merging reviewed taxonomy relationships', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'bo-locked-taxonomy-'))
+    const manifestPath = join(directory, 'taxonomy.json')
+    const sourceVersion = `sha256:v1:${'9'.repeat(64)}`
+    const operations: string[] = []
+    try {
+      await writeFile(manifestPath, JSON.stringify({
+        schema_version: 1, review_id: 'locked-fixture-v1', reviewed_at: '2026-08-27T00:00:00.000Z',
+        evidence_refs: ['reviews/locked-fixture-v1'], assignments: [{
+          node_type: 'model', stable_key: 'model:higgsfield', label: 'Higgsfield', promotion_state: 'reviewed',
+          target_source_versions: [sourceVersion], expected_artifact_count: 1,
+        }],
+      }))
+      const manifest = await loadReviewedTaxonomyManifest(manifestPath)
+      const artifact = {
+        id: 10, revision: 3, updatedAt: '2026-08-27T00:00:00.000Z', source_version: sourceVersion,
+        source: 101, model_refs: [7], taxonomy_refs: [8],
+      }
+      let taxonomyNode: Record<string, unknown> | undefined
+      const payload = {
+        async find(input: Record<string, unknown>) {
+          if (input.collection === 'taxonomy-nodes') return { docs: taxonomyNode === undefined ? [] : [taxonomyNode] }
+          if (input.collection === 'prompt-artifacts') return { docs: [artifact] }
+          if (input.collection === 'audit-events') return { docs: [] }
+          return { docs: [] }
+        },
+        async create(input: Record<string, unknown>) {
+          const created = { id: input.collection === 'taxonomy-nodes' ? 41 : 42, ...(input.data as object) }
+          if (input.collection === 'taxonomy-nodes') taxonomyNode = created
+          return created
+        },
+        async findByID(input: Record<string, unknown>) {
+          if (input.collection === 'taxonomy-nodes') return taxonomyNode!
+          operations.push('read')
+          return artifact
+        },
+        async update(input: Record<string, unknown>) {
+          if (input.collection === 'taxonomy-nodes') {
+            taxonomyNode = { ...taxonomyNode, ...(input.data as object) }
+            return taxonomyNode
+          }
+          operations.push('update')
+          expect(input).toMatchObject({ collection: 'prompt-artifacts', id: 10 })
+          expect(input).not.toHaveProperty('where')
+          Object.assign(artifact, input.data)
+          return artifact
+        },
+        db: {
+          tableNameMap: new Map([
+            ['prompt_artifacts', 'prompt_artifacts'],
+            ['prompt_artifacts_rels', 'prompt_artifacts_rels'],
+          ]),
+          tables: {
+            prompt_artifacts: { id: Symbol('prompt-artifacts.id'), table: 'parent' },
+            prompt_artifacts_rels: {
+              id: Symbol('prompt-artifacts-rels.id'), parent: Symbol('prompt-artifacts-rels.parent'), table: 'relationships',
+            },
+          },
+          sessions: {
+            'tx-lock': {
+              db: {
+                select() {
+                  return { from: (table: Record<string, unknown>) => ({ where: () => ({
+                    for: async (strength: string) => {
+                      expect(strength).toBe('update')
+                      operations.push(`lock:${String(table.table)}`)
+                      return table.table === 'parent' ? [{ id: 10 }] : [{ id: 90 }]
+                    },
+                  }) }) }
+                },
+              },
+            },
+          },
+          async beginTransaction() { return 'tx-lock' },
+          async commitTransaction() {},
+          async rollbackTransaction() {},
+        },
+      }
+
+      await expect(applyReviewedTaxonomyManifest(payload as never, manifest, 1, (transactionID) => ({ transactionID }))).resolves.toEqual({
+        createdNodeCount: 1, updatedNodeCount: 0, linkedArtifactCount: 1,
+      })
+      expect(operations).toEqual(['lock:parent', 'lock:relationships', 'read', 'update'])
+      expect(artifact).toMatchObject({ model_refs: [7, 41], taxonomy_refs: [8], revision: 4 })
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('leaves the taxonomy node non-consumable when a later relationship batch fails', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'bo-taxonomy-fault-'))
+    const manifestPath = join(directory, 'taxonomy.json')
+    const sourceVersion = `sha256:v1:${'c'.repeat(64)}`
+    try {
+      await writeFile(manifestPath, JSON.stringify({
+        schema_version: 1, review_id: 'fault-fixture-v1', reviewed_at: '2026-08-27T00:00:00.000Z',
+        evidence_refs: ['reviews/fault-fixture-v1'], assignments: [{
+          node_type: 'model', stable_key: 'model:higgsfield', label: 'Higgsfield', promotion_state: 'reviewed',
+          target_source_versions: [sourceVersion], expected_artifact_count: 51,
+        }],
+      }))
+      const manifest = await loadReviewedTaxonomyManifest(manifestPath)
+      const promptDocuments = Array.from({ length: 51 }, (_, index) => ({
+        id: index + 1, revision: 1, updatedAt: `2026-08-27T00:00:${String(index).padStart(2, '0')}.000Z`,
+        source_version: sourceVersion, source: index + 100, model_refs: [] as number[], taxonomy_refs: [] as number[],
+      }))
+      let taxonomyNode: Record<string, unknown> | undefined
+      let promptUpdates = 0
+      let reviewEvents = 0
+      const payload = {
+        async find(input: Record<string, unknown>) {
+          if (input.collection === 'taxonomy-nodes') return { docs: taxonomyNode === undefined ? [] : [taxonomyNode] }
+          if (input.collection === 'prompt-artifacts') return { docs: promptDocuments }
+          if (input.collection === 'audit-events') return { docs: [] }
+          return { docs: [] }
+        },
+        async create(input: Record<string, unknown>) {
+          if (input.collection === 'taxonomy-nodes') {
+            taxonomyNode = { id: 80, ...(input.data as object) }
+            return taxonomyNode
+          }
+          if (input.collection === 'audit-events') reviewEvents += 1
+          return { id: 81, ...(input.data as object) }
+        },
+        async findByID(input: Record<string, unknown>) { return promptDocuments.find((document) => document.id === input.id)! },
+        async update(input: Record<string, unknown>) {
+          if (input.collection === 'taxonomy-nodes') {
+            taxonomyNode = { ...taxonomyNode, ...(input.data as object) }
+            return taxonomyNode
+          }
+          promptUpdates += 1
+          if (promptUpdates === 51) throw new Error('injected taxonomy relationship failure')
+          const document = promptDocuments.find((candidate) => candidate.id === input.id)!
+          Object.assign(document, input.data)
+          return document
+        },
+      }
+
+      await expect(applyReviewedTaxonomyManifest(payload as never, manifest, 1)).rejects.toThrow(/injected taxonomy relationship failure/i)
+      expect(promptUpdates).toBe(51)
+      expect(taxonomyNode).toMatchObject({ promotion_state: 'candidate' })
+      expect(reviewEvents).toBe(0)
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
   })
 
   it('uses a fresh Payload request carrier for every concurrent publication mutation', async () => {

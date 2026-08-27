@@ -37,7 +37,11 @@ media-backed, and usable through all 16 locale routes.
 ## Phase 4 — Release and verification
 
 - [x] Run focused tests, typecheck, lint and build.
-- [ ] Deploy backward-compatible reader/schema changes.
+- [x] Deploy backward-compatible reader/schema changes.
+- [x] Implement candidate-staged, revision-CAS and PostgreSQL parent/relationship-row-locked taxonomy ingress with
+  immutable review evidence and fault/zero-write retry tests.
+- [ ] Ingest the reviewed Higgsfield taxonomy manifest and backfill exact Payload
+  relationships for the 1,043 target artifacts.
 - [ ] Promote eligible preview media, generate the complete corpus, reconcile counts,
   and activate the new version.
 - [ ] Browser-test the four-hop path, visible media and all 16 locale Hub routes.

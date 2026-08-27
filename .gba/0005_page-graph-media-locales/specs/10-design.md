@@ -29,6 +29,37 @@ Payload remains the write authority. The frontend reads exactly one bound immuta
 projection and never joins Source, Artifact, Media or graph collections at request
 time. Locale fallback transforms only already-bound renderer bytes.
 
+### 1.1 Reviewed taxonomy ingress
+
+Entity pages are not inferred from prompt prose or folder names at projection time.
+An operator-supplied reviewed taxonomy manifest is a separate, auditable write-plane
+input. Each assignment declares one reviewed/qualified taxonomy identity, the exact
+source-version hashes it covers, and the expected artifact cardinality. The publisher
+must reject a count mismatch before linking anything.
+
+For an accepted manifest the write plane:
+
+1. stages every manifest node as `candidate`, making it non-consumable by the
+   projector;
+2. links every targeted PromptArtifact through `model_refs` or `taxonomy_refs` while
+   preserving existing relationships;
+3. takes a PostgreSQL `FOR UPDATE` lock on the artifact parent and then its existing
+   relationship rows in the same Payload adapter transaction, then re-reads and
+   merges its relationships before an ID-scoped Local API update whose collection
+   hook atomically claims and increments the persisted revision;
+4. verifies the full expected relationship set;
+5. promotes all manifest nodes and appends their immutable review audit events in one
+   final transaction;
+6. re-reads populated Payload relationships before building projections.
+
+The accepted review event records the Payload service actor, `review_id`,
+`reviewed_at`, manifest hash and review evidence references. The TaxonomyNode carries
+relationships to the covered Source evidence and shares the deterministic review
+correlation ID with its mutation audit events.
+
+The review manifest is evidence, not page content. A missing manifest leaves taxonomy
+empty; it must never trigger a fabricated Entity route.
+
 ## 2. Page graph contract
 
 ### 2.1 Required hops
@@ -145,6 +176,21 @@ has `lang` and a visible fallback disclosure when content metadata remains Engli
 Projection/workflow rows are written in bounded batches of 25. Binding rows use
 batches of 50. Preview promotion uses batches of 50. Every batch opens a Payload
 PostgreSQL transaction when the configured adapter exposes transaction methods.
+Reviewed taxonomy links also use batches of 50 and complete before projection input
+is read. The parent-plus-relationship lock protocol is required because Payload 3.88
+bulk `where` updates resolve IDs before the final adapter write. A PromptArtifact
+collection hook atomically claims `WHERE id AND revision`, increments revision, and
+forces every supported relationship-only Local/API update through the parent row.
+Stale requests fail with a revision conflict after waiting instead of overwriting
+new relationships, and all writers share Payload's parent-then-relationships order.
+Existing relationship changes serialize on their row locks; new inserts serialize
+through the parent foreign-key lock. Direct database relationship writes are outside
+the supported CMS contract. If any link batch fails, all involved nodes remain
+`candidate`; earlier
+committed relationship batches therefore cannot leak a partial Entity into a later
+release. Their accepted review evidence becomes an auditable CMS fact only in the
+final all-node promotion transaction. A later page-release failure does not revoke
+that completed CMS fact, but the incomplete page release still cannot become active.
 
 For every projection inside a batch:
 
@@ -184,6 +230,8 @@ introduce generated filler.
 - Browser click path Hub → Gallery → Entity → Detail plus a locale switch.
 - Full 1043-artifact publication reconciliation: generated projection count equals
   workflow success count equals binding count; active pointer references that version.
+- Active release reconciliation must contain at least one bound Entity route whenever
+  its reviewed taxonomy manifest targeted a non-empty artifact set.
 - Typecheck, lint where configured, production build, `git diff --check`, and an
   independent phase review.
 

@@ -11,6 +11,7 @@ import { describe, expect, it } from 'vitest'
 import { validateMediaEvidence } from '@/collections/MediaEvidence'
 import { validateModuleEnvelopePayload } from '@/collections/ModuleEnvelopes'
 import { PageProjections, validatePageProjection } from '@/collections/PageProjections'
+import { serializePromptRelationshipUpdate } from '@/collections/PromptArtifacts'
 import { PublicationProjections } from '@/collections/PublicationProjections'
 import { APPLICATION_LOCALES } from '@/contracts/locale'
 import { mediaEvidenceSchema } from '@/contracts/projection'
@@ -43,6 +44,45 @@ const projectionData = () => {
 const mediaData = () => ({ media_evidence_id: ID, source_ref: 1, source_version: HASH, workflow_run: 1, provider: 'x', provider_media_id: 'x-1', media_type: 'image', width: 640, height: 480, duration_ms: null, remote_url: 'https://pbs.twimg.com/media/x.jpg', thumbnail_url: null, observed_at: '2026-08-26T00:00:00.000Z', rights_state: 'display_licensed', sensitive_content_state: 'allowed', content_hash: HASH, visibility: 'internal_preview', delivery_target: 'x_cdn', preview_noindex: true, attribution_url: 'https://x.com/example/status/1' })
 
 describe('Payload projection collections', () => {
+  it('atomically claims and increments the PromptArtifact revision before a relationship update', async () => {
+    const claimed: Record<string, unknown>[] = []
+    const database = {
+      update() {
+        return { set: (values: Record<string, unknown>) => {
+          claimed.push(values)
+          return { where: () => ({ returning: async () => [{ id: 10 }] }) }
+        } }
+      },
+    }
+    const req = {
+      transactionID: 'tx-prompt-relation',
+      payload: { db: {
+        sessions: { 'tx-prompt-relation': { db: database } },
+        tables: { prompt_artifacts: { id: {}, revision: {} } },
+      } },
+    }
+    await expect(serializePromptRelationshipUpdate({
+      data: { model_refs: [41] }, operation: 'update', originalDoc: { id: 10, revision: 7 }, req,
+    } as never)).resolves.toMatchObject({ model_refs: [41], revision: 8 })
+    expect(claimed).toEqual([{ revision: 8 }])
+  })
+
+  it('rejects a stale relationship update whose expected PromptArtifact revision lost the CAS', async () => {
+    const database = {
+      update: () => ({ set: () => ({ where: () => ({ returning: async () => [] }) }) }),
+    }
+    await expect(serializePromptRelationshipUpdate({
+      data: { taxonomy_refs: [42] }, operation: 'update', originalDoc: { id: 10, revision: 9 },
+      req: {
+        transactionID: 'tx-stale-relation',
+        payload: { db: {
+          sessions: { 'tx-stale-relation': { db: database } },
+          tables: { prompt_artifacts: { id: {}, revision: {} } },
+        } },
+      },
+    } as never)).rejects.toThrow(/revision conflict/i)
+  })
+
   it('uses the canonical 16-locale set for immutable projections and bindings', () => {
     const pageLocale = PageProjections.fields.find((field) => 'name' in field && field.name === 'locale')
     const bindingLocale = PublicationProjections.fields.find((field) => 'name' in field && field.name === 'locale')

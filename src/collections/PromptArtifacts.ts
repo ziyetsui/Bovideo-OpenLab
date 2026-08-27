@@ -1,15 +1,73 @@
-import type { CollectionConfig } from 'payload'
+import { and, eq } from 'drizzle-orm'
+import { APIError, type CollectionBeforeChangeHook, type CollectionConfig } from 'payload'
 
 import { auditAfterChange, auditAfterDelete, collectionAccess } from '@/access/payload-access'
 
 import { preventPromptOriginalTextMutation, preventStableIdMutation, productionFields } from './shared'
+
+/**
+ * Payload's PostgreSQL adapter can replace relationship rows without an atomic
+ * expected-revision predicate. Claiming revision in the request transaction forces
+ * every supported relationship mutation through the parent row and rejects an old
+ * request after it waits behind taxonomy ingress instead of writing stale arrays.
+ */
+type PromptRelationshipCasDatabase = Readonly<{
+  update: (table: never) => Readonly<{
+    set: (values: never) => Readonly<{
+      where: (predicate: never) => Readonly<{
+        returning: (selection: never) => Promise<readonly unknown[]>
+      }>
+    }>
+  }>
+}>
+type PromptRelationshipCasAdapter = Readonly<{
+  sessions?: Readonly<Record<string, Readonly<{ db: PromptRelationshipCasDatabase }>>>
+  tables?: Readonly<Record<string, Readonly<Record<string, unknown>>>>
+}>
+
+export const serializePromptRelationshipUpdate: CollectionBeforeChangeHook = async ({
+  data,
+  operation,
+  originalDoc,
+  req,
+}) => {
+  if (operation !== 'update' || originalDoc === undefined) return data
+  const changed = data as Record<string, unknown>
+  const hasRelationshipChange = ['model_refs', 'taxonomy_refs', 'variation_refs']
+    .some((field) => Object.prototype.hasOwnProperty.call(changed, field))
+  if (!hasRelationshipChange) return data
+  const id = (originalDoc as Record<string, unknown>).id
+  const revision = Number((originalDoc as Record<string, unknown>).revision)
+  if ((typeof id !== 'number' && typeof id !== 'string') || !Number.isSafeInteger(revision) || revision < 1)
+    throw new APIError('PromptArtifact relationship update requires a persisted revision', 409, { field: 'revision' })
+  const transactionID = req.transactionID === undefined ? undefined : await req.transactionID
+  const adapter = req.payload.db as unknown as PromptRelationshipCasAdapter
+  const database = transactionID === undefined ? undefined : adapter.sessions?.[String(transactionID)]?.db
+  const table = adapter.tables?.prompt_artifacts
+  const idColumn = table?.id
+  const revisionColumn = table?.revision
+  if (database === undefined || table === undefined || idColumn === undefined || revisionColumn === undefined)
+    throw new Error('PromptArtifact relationship CAS requires the PostgreSQL transaction')
+  const nextRevision = revision + 1
+  const rows = await database.update(table as never)
+    .set({ revision: nextRevision } as never)
+    .where(and(
+      eq(idColumn as never, id as never),
+      eq(revisionColumn as never, revision as never),
+    ) as never)
+    .returning({ id: idColumn } as never)
+  if (rows.length !== 1)
+    throw new APIError('PromptArtifact relationship revision conflict', 409, { field: 'revision' })
+  changed.revision = nextRevision
+  return data
+}
 
 export const PromptArtifacts: CollectionConfig = {
   slug: 'prompt-artifacts',
   admin: { useAsTitle: 'canonical_label' },
   access: collectionAccess('prompt-artifacts'),
   hooks: {
-    beforeChange: [preventStableIdMutation, preventPromptOriginalTextMutation],
+    beforeChange: [preventStableIdMutation, preventPromptOriginalTextMutation, serializePromptRelationshipUpdate],
     afterChange: [auditAfterChange('prompt-artifacts')],
     afterDelete: [auditAfterDelete('prompt-artifacts')],
   },

@@ -1,6 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import { createInterface } from 'node:readline'
+import { eq } from 'drizzle-orm'
 import { getPayload } from 'payload'
 import { pathToFileURL } from 'node:url'
 
@@ -14,6 +16,16 @@ import { buildPublicationProjectionBindings } from '../src/publication/projectio
 
 type PayloadDocument = Record<string, unknown>
 type PayloadTransactionID = string | number
+type PayloadRowLockQuery = Readonly<{
+  for: (strength: 'update') => Promise<readonly PayloadDocument[]>
+}>
+type PayloadRowLockTransaction = Readonly<{
+  select: (selection: PayloadDocument) => Readonly<{
+    from: (table: PayloadDocument) => Readonly<{
+      where: (condition: unknown) => PayloadRowLockQuery
+    }>
+  }>
+}>
 type PayloadLocalAPI = Readonly<{
   find: (input: Record<string, unknown>) => Promise<Readonly<{ docs: PayloadDocument[]; totalDocs?: number }>>
   findByID: (input: Record<string, unknown>) => Promise<PayloadDocument>
@@ -25,6 +37,9 @@ type PayloadLocalAPI = Readonly<{
     beginTransaction?: () => Promise<PayloadTransactionID | null>
     commitTransaction?: (id: PayloadTransactionID) => Promise<void>
     rollbackTransaction?: (id: PayloadTransactionID) => Promise<void>
+    sessions?: Readonly<Record<string, Readonly<{ db: PayloadRowLockTransaction }>>>
+    tableNameMap?: ReadonlyMap<string, string>
+    tables?: Readonly<Record<string, PayloadDocument>>
   }>
 }>
 
@@ -33,6 +48,7 @@ export type LocalProjectionPublishArgs = Readonly<{
   concurrency: number
   promoteXPreviewMedia: boolean
   reviewedMediaManifest: string | undefined
+  reviewedTaxonomyManifest?: string | undefined
 }>
 export type LocalProjectionPublicationResult = Readonly<{
   publishVersion: number
@@ -43,7 +59,28 @@ export type LocalProjectionPublicationResult = Readonly<{
   projectionCount: number
   bindingCount: number
   promotedMediaCount: number
+  reviewedTaxonomyNodeCount: number
+  linkedTaxonomyArtifactCount: number
   durationMs: number
+}>
+
+export type ReviewedTaxonomyAssignment = Readonly<{
+  nodeType: 'model' | 'use_case' | 'style'
+  stableKey: string
+  label: string
+  description: string | undefined
+  promotionState: 'reviewed' | 'qualified'
+  targetSourceVersions: readonly string[]
+  expectedArtifactCount: number
+}>
+
+export type ReviewedTaxonomyManifest = Readonly<{
+  schemaVersion: 1
+  reviewID: string
+  reviewedAt: string
+  evidenceRefs: readonly string[]
+  assignments: readonly ReviewedTaxonomyAssignment[]
+  sourceHash: string
 }>
 
 const hash = (value: string): string => `sha256:v1:${createHash('sha256').update(value, 'utf8').digest('hex')}`
@@ -53,6 +90,18 @@ const records = (value: unknown): readonly PayloadDocument[] => Array.isArray(va
 const relationshipID = (value: unknown): string | number | undefined => {
   const direct = asID(value)
   return direct ?? asID(asRecord(value).id)
+}
+const relationshipIDs = (value: unknown): readonly (string | number)[] => Array.isArray(value)
+  ? value.flatMap((entry) => {
+      const id = relationshipID(entry)
+      return id === undefined ? [] : [id]
+    })
+  : []
+const stableTaxonomyID = (value: string): string => {
+  const hex = createHash('sha256').update(value, 'utf8').digest('hex').slice(0, 32).split('')
+  hex[12] = '5'
+  hex[16] = ['8', '9', 'a', 'b'][Number.parseInt(hex[16]!, 16) % 4]!
+  return `${hex.slice(0, 8).join('')}-${hex.slice(8, 12).join('')}-${hex.slice(12, 16).join('')}-${hex.slice(16, 20).join('')}-${hex.slice(20).join('')}`
 }
 
 /**
@@ -87,6 +136,7 @@ export const parseLocalProjectionPublishArgs = (argumentsAfterCommand = process.
   let concurrency = 8
   let promoteXPreviewMedia = false
   let reviewedMediaManifest: string | undefined
+  let reviewedTaxonomyManifest: string | undefined
   for (let index = 0; index < argumentsAfterCommand.length; index += 1) {
     const argument = argumentsAfterCommand[index]
     if (argument === '--' && index === 0) continue
@@ -98,6 +148,13 @@ export const parseLocalProjectionPublishArgs = (argumentsAfterCommand = process.
       const value = argumentsAfterCommand[index + 1]?.trim()
       if (!value) throw new Error('--reviewed-media-manifest requires a JSONL path')
       reviewedMediaManifest = value
+      index += 1
+      continue
+    }
+    if (argument === '--reviewed-taxonomy-manifest') {
+      const value = argumentsAfterCommand[index + 1]?.trim()
+      if (!value) throw new Error('--reviewed-taxonomy-manifest requires a JSON path')
+      reviewedTaxonomyManifest = value
       index += 1
       continue
     }
@@ -122,7 +179,66 @@ export const parseLocalProjectionPublishArgs = (argumentsAfterCommand = process.
   if (parsedLocale.data !== 'en') throw new Error('local source projection publication supports --locale en only; other locales resolve through the reviewed locale overlay or a translated LocaleVariant')
   if (reviewedMediaManifest !== undefined && !promoteXPreviewMedia)
     throw new Error('--reviewed-media-manifest requires --promote-x-preview-media')
-  return Object.freeze({ locale: parsedLocale.data, concurrency, promoteXPreviewMedia, reviewedMediaManifest })
+  return Object.freeze({ locale: parsedLocale.data, concurrency, promoteXPreviewMedia, reviewedMediaManifest, reviewedTaxonomyManifest })
+}
+
+const reviewedTaxonomyError = (reason: string): Error => new Error(`reviewed taxonomy manifest is invalid: ${reason}`)
+const manifestString = (value: unknown, field: string, maximum = 512): string => {
+  if (typeof value !== 'string' || value.trim().length === 0 || value.length > maximum) throw reviewedTaxonomyError(field)
+  return value
+}
+const manifestKeys = (value: PayloadDocument, allowed: readonly string[], required: readonly string[], field: string): void => {
+  const keys = Object.keys(value)
+  if (keys.some((key) => !allowed.includes(key)) || required.some((key) => !Object.prototype.hasOwnProperty.call(value, key)))
+    throw reviewedTaxonomyError(field)
+}
+
+/** Parses an explicit operator review artifact. Prompt prose, labels and paths are
+ * never used to invent taxonomy during projection generation. */
+export const loadReviewedTaxonomyManifest = async (manifestPath: string): Promise<ReviewedTaxonomyManifest> => {
+  const bytes = await readFile(manifestPath)
+  if (bytes.byteLength === 0 || bytes.byteLength > 1024 * 1024) throw reviewedTaxonomyError('file size')
+  let raw: unknown
+  try { raw = JSON.parse(bytes.toString('utf8')) } catch { throw reviewedTaxonomyError('JSON') }
+  const manifest = asRecord(raw)
+  manifestKeys(manifest, ['schema_version', 'review_id', 'reviewed_at', 'evidence_refs', 'assignments'], ['schema_version', 'review_id', 'reviewed_at', 'evidence_refs', 'assignments'], 'top-level fields')
+  if (manifest.schema_version !== 1) throw reviewedTaxonomyError('schema_version')
+  const reviewID = manifestString(manifest.review_id, 'review_id', 128)
+  if (!/^[A-Za-z0-9._:-]+$/.test(reviewID)) throw reviewedTaxonomyError('review_id')
+  const reviewedAt = manifestString(manifest.reviewed_at, 'reviewed_at', 64)
+  if (new Date(reviewedAt).toISOString() !== reviewedAt) throw reviewedTaxonomyError('reviewed_at')
+  if (!Array.isArray(manifest.evidence_refs) || manifest.evidence_refs.length === 0 || manifest.evidence_refs.length > 50)
+    throw reviewedTaxonomyError('evidence_refs')
+  const evidenceRefs = manifest.evidence_refs.map((value) => manifestString(value, 'evidence_refs', 512))
+  if (!Array.isArray(manifest.assignments) || manifest.assignments.length === 0 || manifest.assignments.length > 50)
+    throw reviewedTaxonomyError('assignments')
+  const seenKeys = new Set<string>()
+  const assignments = manifest.assignments.map((value): ReviewedTaxonomyAssignment => {
+    const assignment = asRecord(value)
+    manifestKeys(assignment, ['node_type', 'stable_key', 'label', 'description', 'promotion_state', 'target_source_versions', 'expected_artifact_count'], ['node_type', 'stable_key', 'label', 'promotion_state', 'target_source_versions', 'expected_artifact_count'], 'assignment fields')
+    const nodeType = assignment.node_type
+    if (nodeType !== 'model' && nodeType !== 'use_case' && nodeType !== 'style') throw reviewedTaxonomyError('node_type')
+    const stableKey = manifestString(assignment.stable_key, 'stable_key', 160)
+    if (!new RegExp(`^${nodeType}:[a-z0-9]+(?:-[a-z0-9]+)*$`).test(stableKey) || seenKeys.has(stableKey)) throw reviewedTaxonomyError('stable_key')
+    seenKeys.add(stableKey)
+    const label = manifestString(assignment.label, 'label', 160).trim()
+    const description = assignment.description === undefined ? undefined : manifestString(assignment.description, 'description', 1000).trim()
+    const promotionState = assignment.promotion_state
+    if (promotionState !== 'reviewed' && promotionState !== 'qualified') throw reviewedTaxonomyError('promotion_state')
+    if (!Array.isArray(assignment.target_source_versions) || assignment.target_source_versions.length === 0 || assignment.target_source_versions.length > 100)
+      throw reviewedTaxonomyError('target_source_versions')
+    const targetSourceVersions = assignment.target_source_versions.map((candidate) => manifestString(candidate, 'target_source_versions', 80))
+    if (targetSourceVersions.some((candidate) => !/^sha256:v1:[0-9a-f]{64}$/.test(candidate)) || new Set(targetSourceVersions).size !== targetSourceVersions.length)
+      throw reviewedTaxonomyError('target_source_versions')
+    const expectedArtifactCount = assignment.expected_artifact_count
+    if (!Number.isSafeInteger(expectedArtifactCount) || Number(expectedArtifactCount) < 1 || Number(expectedArtifactCount) > 10_000)
+      throw reviewedTaxonomyError('expected_artifact_count')
+    return Object.freeze({ nodeType, stableKey, label, description, promotionState, targetSourceVersions: Object.freeze(targetSourceVersions), expectedArtifactCount: Number(expectedArtifactCount) })
+  })
+  return Object.freeze({
+    schemaVersion: 1, reviewID, reviewedAt, evidenceRefs: Object.freeze(evidenceRefs), assignments: Object.freeze(assignments),
+    sourceHash: `sha256:v1:${createHash('sha256').update(bytes).digest('hex')}`,
+  })
 }
 
 const mediaEvidenceFromDocument = (document: PayloadDocument): MediaEvidence | undefined => {
@@ -309,6 +425,240 @@ const withPayloadTransaction = async <Result>(
 const inTransaction = <Carrier extends object>(carrier: Carrier, transactionID: PayloadTransactionID | undefined): Carrier & { transactionID?: PayloadTransactionID } =>
   transactionID === undefined ? carrier : { ...carrier, transactionID }
 
+/**
+ * Payload's public bulk update first resolves matching IDs and then performs an
+ * ID-only adapter update, so a revision predicate is not a database CAS. The
+ * PostgreSQL adapter session is the actual transaction used by Local API calls.
+ * The PromptArtifact collection hook forces relationship-only Local/API writes
+ * through the parent row. Match Payload's parent-then-relationships lock order:
+ * existing-row deletes/replacements wait on the second lock, while inserts wait
+ * because their foreign-key check takes KEY SHARE against the parent FOR UPDATE.
+ */
+const lockPromptArtifactForUpdate = async (
+  payload: PayloadLocalAPI,
+  transactionID: PayloadTransactionID | undefined,
+  artifactID: string | number,
+): Promise<void> => {
+  if (transactionID === undefined) return
+  const database = payload.db
+  const transaction = database?.sessions?.[String(transactionID)]?.db
+  const tableName = database?.tableNameMap?.get('prompt_artifacts')
+  const relationshipTableName = database?.tableNameMap?.get('prompt_artifacts_rels')
+  const table = tableName === undefined ? undefined : database?.tables?.[tableName]
+  const relationshipTable = relationshipTableName === undefined ? undefined : database?.tables?.[relationshipTableName]
+  if (transaction === undefined || table === undefined || table.id === undefined ||
+    relationshipTable === undefined || relationshipTable.id === undefined || relationshipTable.parent === undefined)
+    throw new Error('Payload PostgreSQL transaction row-lock primitives are unavailable')
+  const rows = await transaction
+    .select({ id: table.id })
+    .from(table)
+    .where(eq(table.id as never, artifactID as never))
+    .for('update')
+  if (rows.length !== 1) throw new Error(`reviewed taxonomy artifact is missing while locking ${artifactID}`)
+  await transaction
+    .select({ id: relationshipTable.id })
+    .from(relationshipTable)
+    .where(eq(relationshipTable.parent as never, artifactID as never))
+    .for('update')
+}
+
+export const applyReviewedTaxonomyManifest = async (
+  payload: PayloadLocalAPI,
+  manifest: ReviewedTaxonomyManifest,
+  concurrency: number,
+  requestFactory?: (transactionID?: PayloadTransactionID) => object,
+): Promise<Readonly<{ createdNodeCount: number; updatedNodeCount: number; linkedArtifactCount: number }>> => {
+  if (!Number.isSafeInteger(concurrency) || concurrency < 1 || concurrency > 16) throw new Error('concurrency must be an integer from 1 to 16')
+  const reviewCorrelationID = stableTaxonomyID(`reviewed-taxonomy-correlation:${manifest.reviewID}:${manifest.sourceHash}`)
+  const eventIDFor = (stableKey: string): string => stableTaxonomyID(`reviewed-taxonomy-event:${manifest.reviewID}:${manifest.sourceHash}:${stableKey}`)
+  const artifactWhere = (assignment: ReviewedTaxonomyAssignment) => ({ and: [
+    { kind: { equals: 'prompt' } },
+    { source_version: { in: assignment.targetSourceVersions } },
+  ] })
+  const assertedArtifacts = (assignment: ReviewedTaxonomyAssignment, result: Readonly<{ docs: PayloadDocument[]; totalDocs?: number }>): readonly PayloadDocument[] => {
+    const actualCount = typeof result.totalDocs === 'number' ? result.totalDocs : result.docs.length
+    if (actualCount !== assignment.expectedArtifactCount || result.docs.length !== assignment.expectedArtifactCount)
+      throw new Error(`reviewed taxonomy artifact count mismatch for ${assignment.stableKey}: expected ${assignment.expectedArtifactCount}, received ${actualCount}`)
+    return result.docs
+  }
+  const evidenceIDs = (artifacts: readonly PayloadDocument[], stableKey: string): readonly (string | number)[] => Object.freeze([
+    ...new Set(artifacts.map((artifact) => relationshipID(artifact.source)).map((id) => {
+      if (id === undefined) throw new Error(`reviewed taxonomy source id is missing for ${stableKey}`)
+      return id
+    })),
+  ])
+  type AssignmentPlan = {
+    assignment: ReviewedTaxonomyAssignment
+    artifacts: readonly PayloadDocument[]
+    node: PayloadDocument | undefined
+    eventExists: boolean
+    eventID: string
+    finalPromotion: 'reviewed' | 'qualified'
+    evidenceRefs: readonly (string | number)[]
+    complete: boolean
+    wasExisting: boolean
+  }
+  const plans: AssignmentPlan[] = []
+  for (const assignment of manifest.assignments) {
+    const eventID = eventIDFor(assignment.stableKey)
+    const [nodes, artifactsResult, auditEvents] = await Promise.all([
+      payload.find({ collection: 'taxonomy-nodes', depth: 0, limit: 2, overrideAccess: true, where: { stable_key: { equals: assignment.stableKey } } }),
+      payload.find({ collection: 'prompt-artifacts', depth: 0, limit: 10_000, overrideAccess: true, where: artifactWhere(assignment), sort: 'id' }),
+      payload.find({ collection: 'audit-events', depth: 0, limit: 2, overrideAccess: true, where: { event_id: { equals: eventID } } }),
+    ])
+    const artifacts = assertedArtifacts(assignment, artifactsResult)
+    if (nodes.docs.length > 1) throw new Error(`duplicate taxonomy node ${assignment.stableKey}`)
+    const node = nodes.docs[0]
+    if (node !== undefined && (node.node_type !== assignment.nodeType || node.label !== assignment.label))
+      throw new Error(`conflicting taxonomy node ${assignment.stableKey}`)
+    const nodeID = node === undefined ? undefined : asID(node.id)
+    if (node !== undefined && nodeID === undefined) throw new Error(`taxonomy node id is missing for ${assignment.stableKey}`)
+    const targetEvidence = evidenceIDs(artifacts, assignment.stableKey)
+    const finalPromotion = node?.promotion_state === 'qualified' ? 'qualified' : assignment.promotionState
+    const relationshipField = assignment.nodeType === 'model' ? 'model_refs' : 'taxonomy_refs'
+    const complete = node !== undefined && nodeID !== undefined &&
+      node.source_version === manifest.sourceHash && node.status === 'active' &&
+      (typeof node.description === 'string' ? node.description : undefined) === assignment.description &&
+      node.promotion_state === finalPromotion && Number(node.inventory_count) === assignment.expectedArtifactCount &&
+      targetEvidence.every((id) => relationshipIDs(node.evidence_refs).includes(id)) &&
+      artifacts.every((artifact) => relationshipIDs(artifact[relationshipField]).includes(nodeID)) &&
+      auditEvents.docs.length === 1
+    plans.push({ assignment, artifacts, node, eventExists: auditEvents.docs.length === 1, eventID, finalPromotion, evidenceRefs: targetEvidence, complete, wasExisting: node !== undefined })
+  }
+
+  const linkedArtifactCount = new Set(plans.flatMap((plan) => plan.artifacts.map((artifact) => String(artifact.id)))).size
+  if (plans.every((plan) => plan.complete))
+    return Object.freeze({ createdNodeCount: 0, updatedNodeCount: 0, linkedArtifactCount })
+
+  // Every node in this manifest becomes a non-consumable candidate before any
+  // relationship batch commits. A failed ingress can therefore never leak a
+  // partially linked reviewed Entity into a later publication.
+  await withPayloadTransaction(payload, async (transactionID) => {
+    for (const plan of plans) {
+      const req = requestFactory?.(transactionID)
+      if (plan.node === undefined) {
+        plan.node = await payload.create({
+          collection: 'taxonomy-nodes', overrideAccess: true, ...(req === undefined ? {} : { req }),
+          data: {
+            stable_id: stableTaxonomyID(`reviewed-taxonomy:${plan.assignment.stableKey}`), schema_version: 1, revision: 1,
+            source_version: manifest.sourceHash, status: 'active', node_type: plan.assignment.nodeType, stable_key: plan.assignment.stableKey,
+            label: plan.assignment.label, description: plan.assignment.description, promotion_state: 'candidate',
+            evidence_refs: plan.evidenceRefs, inventory_count: plan.assignment.expectedArtifactCount,
+            audit: { correlation_id: reviewCorrelationID },
+          },
+        })
+      } else {
+        plan.node = await payload.update({
+          collection: 'taxonomy-nodes', id: plan.node.id, overrideAccess: true, ...(req === undefined ? {} : { req }),
+          data: {
+            source_version: manifest.sourceHash, status: 'active', description: plan.assignment.description,
+            promotion_state: 'candidate', evidence_refs: [...new Set([...relationshipIDs(plan.node.evidence_refs), ...plan.evidenceRefs])],
+            inventory_count: plan.assignment.expectedArtifactCount, audit: { correlation_id: reviewCorrelationID },
+          },
+        })
+      }
+    }
+  })
+
+  type ArtifactTarget = { id: string | number; modelNodeIDs: Set<string | number>; taxonomyNodeIDs: Set<string | number> }
+  const targets = new Map<string, ArtifactTarget>()
+  for (const plan of plans) {
+    const nodeID = asID(plan.node?.id)
+    if (nodeID === undefined) throw new Error(`taxonomy node id is missing for ${plan.assignment.stableKey}`)
+    for (const artifact of plan.artifacts) {
+      const artifactID = asID(artifact.id)
+      if (artifactID === undefined) throw new Error(`reviewed taxonomy artifact id is missing for ${plan.assignment.stableKey}`)
+      const target = targets.get(String(artifactID)) ?? { id: artifactID, modelNodeIDs: new Set(), taxonomyNodeIDs: new Set() }
+      if (plan.assignment.nodeType === 'model') target.modelNodeIDs.add(nodeID)
+      else target.taxonomyNodeIDs.add(nodeID)
+      targets.set(String(artifactID), target)
+    }
+  }
+
+  await mapWithConcurrency(batchesOf([...targets.values()], 50), concurrency, async (batch) =>
+    withPayloadTransaction(payload, async (transactionID) => {
+      for (const target of batch) {
+        await lockPromptArtifactForUpdate(payload, transactionID, target.id)
+        const readReq = requestFactory?.(transactionID)
+        const current = await payload.findByID({ collection: 'prompt-artifacts', id: target.id, depth: 0, overrideAccess: true, ...(readReq === undefined ? {} : { req: readReq }) })
+        const modelRefs = new Set(relationshipIDs(current.model_refs))
+        const taxonomyRefs = new Set(relationshipIDs(current.taxonomy_refs))
+        const before = modelRefs.size + taxonomyRefs.size
+        for (const id of target.modelNodeIDs) modelRefs.add(id)
+        for (const id of target.taxonomyNodeIDs) taxonomyRefs.add(id)
+        if (before === modelRefs.size + taxonomyRefs.size) continue
+        const revision = Number(current.revision)
+        const updatedAt = typeof current.updatedAt === 'string' ? current.updatedAt : undefined
+        if (!Number.isSafeInteger(revision) || revision < 1 || updatedAt === undefined)
+          throw new Error(`reviewed taxonomy artifact concurrency metadata is missing for ${target.id}`)
+        const updateReq = requestFactory?.(transactionID)
+        const updated = await payload.update({
+          collection: 'prompt-artifacts', id: target.id, overrideAccess: true, ...(updateReq === undefined ? {} : { req: updateReq }),
+          data: {
+            model_refs: [...modelRefs], taxonomy_refs: [...taxonomyRefs], revision: revision + 1,
+            audit: { correlation_id: reviewCorrelationID },
+          },
+        })
+        if (asID(updated.id) !== target.id) throw new Error(`reviewed taxonomy artifact update failed for ${target.id}`)
+      }
+    }))
+
+  // Promotion and the immutable review events commit together. Until this
+  // transaction succeeds every staged node remains a candidate and is ignored
+  // by the projector.
+  await withPayloadTransaction(payload, async (transactionID) => {
+    for (const plan of plans) {
+      const req = requestFactory?.(transactionID)
+      const verification = await payload.find({
+        collection: 'prompt-artifacts', depth: 0, limit: 10_000, overrideAccess: true,
+        where: artifactWhere(plan.assignment), sort: 'id', ...(req === undefined ? {} : { req }),
+      })
+      const verifiedArtifacts = assertedArtifacts(plan.assignment, verification)
+      const nodeID = asID(plan.node?.id)
+      if (nodeID === undefined) throw new Error(`taxonomy node id is missing for ${plan.assignment.stableKey}`)
+      const relationshipField = plan.assignment.nodeType === 'model' ? 'model_refs' : 'taxonomy_refs'
+      if (!verifiedArtifacts.every((artifact) => relationshipIDs(artifact[relationshipField]).includes(nodeID)))
+        throw new Error(`reviewed taxonomy relationship verification failed for ${plan.assignment.stableKey}`)
+      const currentNode = await payload.findByID({ collection: 'taxonomy-nodes', id: nodeID, depth: 0, overrideAccess: true, ...(req === undefined ? {} : { req }) })
+      plan.node = await payload.update({
+        collection: 'taxonomy-nodes', id: nodeID, overrideAccess: true, ...(requestFactory === undefined ? {} : { req: requestFactory(transactionID) }),
+        data: {
+          source_version: manifest.sourceHash, status: 'active', description: plan.assignment.description,
+          promotion_state: plan.finalPromotion,
+          evidence_refs: [...new Set([...relationshipIDs(currentNode.evidence_refs), ...evidenceIDs(verifiedArtifacts, plan.assignment.stableKey)])],
+          inventory_count: plan.assignment.expectedArtifactCount, audit: { correlation_id: reviewCorrelationID },
+        },
+      })
+      if (!plan.eventExists) {
+        const auditRequest = requestFactory?.(transactionID)
+        const user = asRecord(asRecord(auditRequest).user)
+        const actorStableID = typeof user.stable_id === 'string' ? user.stable_id : 'taxonomy-review-service'
+        await payload.create({
+          collection: 'audit-events', overrideAccess: true, ...(auditRequest === undefined ? {} : { req: auditRequest }),
+          data: {
+            event_id: plan.eventID, stable_id: plan.eventID, schema_version: 1, revision: 1,
+            source_version: manifest.sourceHash, status: 'recorded', actor_user: null, actor_type: 'service',
+            actor_stable_id: actorStableID, actor_service: actorStableID, correlation_id: reviewCorrelationID,
+            causation_id: null, event_type: 'taxonomy.review.accepted', entity_type: 'taxonomy-nodes',
+            entity_stable_id: plan.node.stable_id, outcome: 'allowed', prior_state: null,
+            new_state: {
+              review_id: manifest.reviewID, reviewed_at: manifest.reviewedAt, evidence_refs: manifest.evidenceRefs,
+              manifest_hash: manifest.sourceHash, stable_key: plan.assignment.stableKey,
+              promotion_state: plan.finalPromotion, expected_artifact_count: plan.assignment.expectedArtifactCount,
+            },
+            reason_code: 'reviewed_taxonomy_manifest', occurred_at: manifest.reviewedAt,
+          },
+        })
+      }
+    }
+  })
+  return Object.freeze({
+    createdNodeCount: plans.filter((plan) => !plan.wasExisting).length,
+    updatedNodeCount: plans.filter((plan) => plan.wasExisting).length,
+    linkedArtifactCount,
+  })
+}
+
 const isXCDNURL = (value: unknown): value is string => {
   if (typeof value !== 'string') return false
   try {
@@ -451,6 +801,9 @@ export const publishLocalPseoProjections = async (input: LocalProjectionPublishA
     const reviewedURLs = input.reviewedMediaManifest === undefined
       ? new Set<string>()
       : await loadReviewedXMediaAllowlist(input.reviewedMediaManifest)
+    const reviewedTaxonomy = input.reviewedTaxonomyManifest === undefined
+      ? undefined
+      : await loadReviewedTaxonomyManifest(input.reviewedTaxonomyManifest)
     const [authorities, currentPointer] = await Promise.all([
       findOrCreatePublisherAuthorities(payload), activePointer(payload),
     ])
@@ -461,6 +814,9 @@ export const publishLocalPseoProjections = async (input: LocalProjectionPublishA
     const promotedMediaCount = input.promoteXPreviewMedia
       ? await promoteEligibleXPreviewMedia(payload, input.concurrency, reviewedURLs, publicationRequest)
       : 0
+    const taxonomyResult = reviewedTaxonomy === undefined
+      ? { createdNodeCount: 0, updatedNodeCount: 0, linkedArtifactCount: 0 }
+      : await applyReviewedTaxonomyManifest(payload, reviewedTaxonomy, input.concurrency, publicationRequest)
     const artifacts = await artifactsFromPayload(payload, input.locale)
     const publishVersion = await nextPublishVersion(payload)
     const projections = buildInternalNoindexProjections({ locale: input.locale, publishVersion, artifacts })
@@ -536,6 +892,8 @@ export const publishLocalPseoProjections = async (input: LocalProjectionPublishA
       projectionCount: projections.length,
       bindingCount: bindings.length,
       promotedMediaCount,
+      reviewedTaxonomyNodeCount: taxonomyResult.createdNodeCount + taxonomyResult.updatedNodeCount,
+      linkedTaxonomyArtifactCount: taxonomyResult.linkedArtifactCount,
       durationMs: Date.now() - startedAt,
     })
   } finally {
