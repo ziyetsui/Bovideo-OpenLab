@@ -40,6 +40,7 @@ type PayloadLocalAPI = Readonly<{
     sessions?: Readonly<Record<string, Readonly<{ db: PayloadRowLockTransaction }>>>
     tableNameMap?: ReadonlyMap<string, string>
     tables?: Readonly<Record<string, PayloadDocument>>
+    relationshipsSuffix?: string
   }>
 }>
 
@@ -443,7 +444,9 @@ const lockPromptArtifactForUpdate = async (
   const database = payload.db
   const transaction = database?.sessions?.[String(transactionID)]?.db
   const tableName = database?.tableNameMap?.get('prompt_artifacts')
-  const relationshipTableName = database?.tableNameMap?.get('prompt_artifacts_rels')
+  // Payload's map contains the collection table but relation tables are keyed
+  // directly in `tables` as `${physicalTableName}${relationshipsSuffix}`.
+  const relationshipTableName = tableName === undefined ? undefined : `${tableName}${database?.relationshipsSuffix ?? '_rels'}`
   const table = tableName === undefined ? undefined : database?.tables?.[tableName]
   const relationshipTable = relationshipTableName === undefined ? undefined : database?.tables?.[relationshipTableName]
   if (transaction === undefined || table === undefined || table.id === undefined ||

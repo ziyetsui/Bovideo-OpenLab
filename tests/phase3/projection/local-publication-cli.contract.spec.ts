@@ -199,10 +199,8 @@ describe('local projection publication command', () => {
           return artifact
         },
         db: {
-          tableNameMap: new Map([
-            ['prompt_artifacts', 'prompt_artifacts'],
-            ['prompt_artifacts_rels', 'prompt_artifacts_rels'],
-          ]),
+          tableNameMap: new Map([['prompt_artifacts', 'prompt_artifacts']]),
+          relationshipsSuffix: '_rels',
           tables: {
             prompt_artifacts: { id: Symbol('prompt-artifacts.id'), table: 'parent' },
             prompt_artifacts_rels: {
