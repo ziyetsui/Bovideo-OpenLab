@@ -68,15 +68,25 @@ For a long-lived managed PostgreSQL database, use the managed commands below.
 They validate all required credentials, force `PAYLOAD_DB_PUSH` off, apply the
 reviewed Payload migration ledger, and only then begin a write. A failed
 migration never reaches an importer or collector. This is the intended command
-surface for an API-key collector or scheduler:
+surface for an API-key collector or scheduler. Production uses one private
+evidence backend: either the established local store, or the recommended R2
+store. Supplying both is an error; R2 never falls back to the Render filesystem.
 
 ```bash
 DATABASE_URL='postgres://…' PAYLOAD_SECRET='…' \
-RAW_EVIDENCE_STORE_DIR='/private/pseo-evidence' \
-RAW_EVIDENCE_SIGNER_SECRET='…' \
+RAW_EVIDENCE_R2_ENDPOINT='https://…' \
+RAW_EVIDENCE_R2_REGION='auto' \
+RAW_EVIDENCE_R2_BUCKET='bovideo-openlab-raw-evidence' \
+RAW_EVIDENCE_R2_ACCESS_KEY_ID='…' \
+RAW_EVIDENCE_R2_SECRET_ACCESS_KEY='…' \
 pnpm payload:managed:import:assets -- \
   --assets-root '/absolute/path/to/assets'
 ```
+
+The R2 bucket must remain private: do not enable public access, attach a public
+domain, use an `r2.dev` URL, or place these credentials in source control. The
+S3 credential needs only restricted object access to this one bucket and should
+be rotated before its annual expiry.
 
 Use `pnpm payload:migrate` to apply only the reviewed migration ledger without
 ingesting data. The lower-level `payload:import` and `payload:import:assets`
@@ -96,8 +106,11 @@ only if an operator deliberately keeps that collector elsewhere.
 ```bash
 chmod 600 /private/twitter241.env
 DATABASE_URL='postgres://…' PAYLOAD_SECRET='…' \
-RAW_EVIDENCE_STORE_DIR='/private/pseo-evidence' \
-RAW_EVIDENCE_SIGNER_SECRET='…' \
+RAW_EVIDENCE_R2_ENDPOINT='https://…' \
+RAW_EVIDENCE_R2_REGION='auto' \
+RAW_EVIDENCE_R2_BUCKET='bovideo-openlab-raw-evidence' \
+RAW_EVIDENCE_R2_ACCESS_KEY_ID='…' \
+RAW_EVIDENCE_R2_SECRET_ACCESS_KEY='…' \
 TWITTER241_CREDENTIAL_FILE='/private/twitter241.env' \
 pnpm payload:managed:collect:twitter241
 ```

@@ -1,6 +1,7 @@
-# R2 object-policy boundary (local P1-T04)
+# R2 object-policy boundary
 
-This runbook records the local-only emulator contract for P1-T04. It does not configure, call, or prove Cloudflare R2. Production Phase 0 remains NO-GO.
+This runbook records the local P1-T04 contract and the production raw-evidence
+R2 adapter. It does not make an R2 bucket public or grant direct client access.
 
 ## Local boundary
 
@@ -16,6 +17,39 @@ The four canonical `ObjectRef` namespaces map to these bucket classes:
 | `public-media` | `worker_public` | Worker mediated | publish service writes; public Worker reads only active, eligible media |
 
 The policy is deny-by-default. Anonymous/direct bucket access is denied for every namespace. The local test covers 100 synthetic restricted raw keys; this is a policy proof only, not a remote R2 IAM proof.
+
+## Managed R2 raw-evidence ingress
+
+`R2ObjectStore` is the production adapter for **raw-evidence only**. Before an
+S3-compatible R2 `PutObject`, it parses the complete `ObjectRef`, enforces the
+existing internal `decideObjectAccess` policy, and validates bytes, SHA-256,
+size, MIME type, namespace and content-addressed key. It sends only bucket,
+key, body, content type and content length: it does not create ACLs, URLs,
+custom domains, or public read paths.
+
+Set all of the following private environment variables on the managed Payload
+service and its managed import/collector process: `RAW_EVIDENCE_R2_ENDPOINT`,
+`RAW_EVIDENCE_R2_REGION` (`auto`), `RAW_EVIDENCE_R2_BUCKET`,
+`RAW_EVIDENCE_R2_ACCESS_KEY_ID`, and `RAW_EVIDENCE_R2_SECRET_ACCESS_KEY`.
+The credential must be limited to the single raw-evidence bucket and rotated
+before annual expiry. Never put it in a repository, Payload row, command output,
+or client-side configuration.
+
+`RAW_EVIDENCE_R2_ENDPOINT` is intentionally constrained to the standard
+`https://<ACCOUNT_ID>.r2.cloudflarestorage.com` form, with no path, port,
+credentials, query, or fragment. This prevents an environment mistake from
+signing an S3 request to an arbitrary host. Each write uses `If-None-Match: *`;
+when a deterministic key already exists, the adapter reads it back and requires
+byte-for-byte equality before it may issue a new trusted ingress receipt.
+
+An importer chooses exactly one complete storage configuration. Complete R2
+configuration selects R2; complete `RAW_EVIDENCE_STORE_DIR` plus
+`RAW_EVIDENCE_SIGNER_SECRET` selects the local test/development adapter; a
+partial configuration or both modes is rejected. R2 ingress receipts are opaque
+and process-local, bound to raw ref, actor and correlation ID. A crash can leave
+an unreferenced content-addressed object, but retrying writes the same immutable
+key before attempting the same idempotent Payload facts. This is intentionally
+not a replacement for the local adapter's filesystem crash journal.
 
 ## Object and upload invariants
 
@@ -33,4 +67,7 @@ Private reads can use a short-lived signed-read capability object, never a URL. 
 
 `delete` requires policy authorization, persists the lifecycle-unavailable ref plus an idempotency-keyed local deletion outbox before touching the object, then removes the local object and invokes the injected private deletion-ledger callback. Its event carries the immutable deletion idempotency key/request correlation, full removed `ObjectRef`, namespace, content hash, and reason so receivers can deduplicate at-least-once retries. The callback is never invoked while the root lock is held; a durable delivery claim is heartbeated while it runs, then acknowledged only if its same claim remains current. A process crash stops that heartbeat and recovery retries the same immutable event key. Internal mutations are serialized by an OS-held SQLite `BEGIN IMMEDIATE` transaction in a separate root-lock journal (no expiring/stolen lock); the durable control journal records filesystem intents before mutation and reconciles an already-persisted deletion phase after restart. Pending/failed callbacks are retained across adapter restart. Production withdrawal must remove revoked/deleted objects from public allow-lists and fan out to the storage/deletion ledger.
 
-The following remain `deferred-to-P0`: real bucket IAM and `r2.dev` denial, remote 100-key sampling, SSE configuration, custom-domain/Worker enforcement, real audit delivery, retention/archive lifecycle, and any public Cloudflare object-store behavior.
+The following remain operational verification items: remote IAM sampling,
+encryption/retention lifecycle confirmation, real audit delivery, and any public
+Cloudflare object-store behavior. Public R2 access, `r2.dev`, and custom domains
+remain prohibited for this bucket.

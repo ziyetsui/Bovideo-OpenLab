@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url'
 import { createUlid } from '../src/access/ulid'
 import { importAssetsRoot, planAssetsRootImport, recordDerivedEvidenceWorkflow } from '../src/imports/assets-root'
 import { importHiggsfieldSnapshot, type SnapshotImportPayload } from '../src/imports/higgsfield-snapshot'
-import { LocalObjectStore } from '../src/storage/local-object-store'
+import { resolveRawEvidenceStoreFromEnvironment } from '../src/storage/raw-evidence-store'
 
 export type AssetsRootImportCommand = Readonly<{ rootDirectory: string; dryRun: boolean }>
 
@@ -37,14 +37,10 @@ export async function runAssetsRootImportCommand(
 ): Promise<unknown> {
   const { rootDirectory, dryRun } = parseAssetsRootImportArgs(argumentsAfterCommand, environment)
   if (dryRun) return await planAssetsRootImport(rootDirectory)
-  const directory = environment.RAW_EVIDENCE_STORE_DIR?.trim()
-  const signerSecret = environment.RAW_EVIDENCE_SIGNER_SECRET?.trim()
-  if (!directory) throw new Error('RAW_EVIDENCE_STORE_DIR is required when not using --dry-run')
-  if (!signerSecret) throw new Error('RAW_EVIDENCE_SIGNER_SECRET is required when not using --dry-run')
   const payload = await getPayload({ config: (await import('../src/payload.config')).createPayloadConfig() })
   const livePool = payload.db.pool
   try {
-    const store = new LocalObjectStore({ root_dir: directory, signer_secret: signerSecret })
+    const store = resolveRawEvidenceStoreFromEnvironment(environment)
     const result = await importAssetsRoot({
       rootDirectory,
       store,

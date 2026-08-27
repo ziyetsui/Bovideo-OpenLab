@@ -1,6 +1,6 @@
 import { APIError, type CollectionBeforeChangeHook } from 'payload'
 
-import { LocalObjectStore, type ObjectIngressField, type ObjectIngressReceipt } from './local-object-store'
+import type { ObjectIngressField, ObjectIngressReceipt, ObjectIngressStore } from './object-ingress-store'
 import { objectRefSchema, type ObjectNamespace } from './object-ref'
 
 const authorityContextKey = '__phase1ObjectAuthority'
@@ -14,11 +14,11 @@ const commands = new WeakMap<object, Readonly<{
 }>>()
 
 /** Store-backed authority. It deliberately has no callback/returned-ObjectRef escape hatch. */
-export type ObjectAuthority = Readonly<{ readonly store: LocalObjectStore }>
+export type ObjectAuthority = Readonly<{ readonly store: ObjectIngressStore }>
 /** Opaque, non-serializable server command. A JSON copy loses its WeakMap membership. */
 export type ObjectIngressCommand = object
 
-export const createObjectAuthority = (store: LocalObjectStore): ObjectAuthority => {
+export const createObjectAuthority = (store: ObjectIngressStore): ObjectAuthority => {
   const authority = Object.freeze({ store })
   authorities.add(authority)
   return authority

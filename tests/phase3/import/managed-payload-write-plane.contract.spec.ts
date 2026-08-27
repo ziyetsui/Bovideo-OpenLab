@@ -61,6 +61,26 @@ describe('managed Payload write-plane commands', () => {
     expect(process.env.PAYLOAD_DB_PUSH).not.toBe('true')
   })
 
+  it('accepts a complete private R2 configuration without requiring local storage', async () => {
+    const write = vi.fn(async () => ({ imported: true }))
+
+    await expect(runManagedPayloadWritePlane({
+      environment: {
+        DATABASE_URL: managedEnvironment.DATABASE_URL,
+        PAYLOAD_SECRET: managedEnvironment.PAYLOAD_SECRET,
+        RAW_EVIDENCE_R2_ACCESS_KEY_ID: 'access-key',
+        RAW_EVIDENCE_R2_SECRET_ACCESS_KEY: 'secret-key',
+        RAW_EVIDENCE_R2_ENDPOINT: 'https://example.invalid',
+        RAW_EVIDENCE_R2_BUCKET: 'private-evidence',
+        RAW_EVIDENCE_R2_REGION: 'auto',
+      },
+      migrate: async () => ({ applied: [] }),
+      write,
+    })).resolves.toEqual({ migration: { applied: [] }, write: { imported: true } })
+
+    expect(write).toHaveBeenCalledOnce()
+  })
+
   it('does not run an importer if migration rejects', async () => {
     const write = vi.fn(async () => ({ imported: true }))
 

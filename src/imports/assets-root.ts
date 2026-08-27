@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { principals } from '@/access/principals'
 import { createWorkflowRunTransitionRequest } from '@/collections/canonical-payload-contract'
 import type { SnapshotImportPayload } from '@/imports/higgsfield-snapshot'
-import { LocalObjectStore } from '@/storage/local-object-store'
+import type { ObjectIngressStore } from '@/storage/object-ingress-store'
 import type { ObjectRef } from '@/storage/object-ref'
 
 export type AssetsRootImportPlan = Readonly<{
@@ -43,7 +43,7 @@ const CHUNK_BYTES = 8 * 1024 * 1024
 export const archivePrivateEvidenceDirectory = async (input: Readonly<{
   directory: string
   label: string
-  store: LocalObjectStore
+  store: ObjectIngressStore
 }>): Promise<ObjectRef> => {
   if (!input.label.trim()) throw new Error('derived evidence label is required')
   const entries = await readdir(input.directory, { withFileTypes: true })
@@ -154,7 +154,7 @@ export type AssetsRootImportResult<TSnapshot> = Readonly<{
  */
 export const importAssetsRoot = async <TSnapshot>(input: Readonly<{
   rootDirectory: string
-  store: LocalObjectStore
+  store: ObjectIngressStore
   importSnapshot: (directory: string) => Promise<TSnapshot>
 }>): Promise<AssetsRootImportResult<TSnapshot>> => {
   const plan = await planAssetsRootImport(input.rootDirectory)

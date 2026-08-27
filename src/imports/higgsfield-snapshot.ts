@@ -6,7 +6,7 @@ import { basename, join } from 'node:path'
 import { principals } from '@/access/principals'
 import { createWorkflowRunTransitionRequest } from '@/collections/canonical-payload-contract'
 import { createObjectAuthority, createObjectIngressCommand, withObjectAuthority } from '@/storage/payload-object-authority'
-import { LocalObjectStore } from '@/storage/local-object-store'
+import type { ObjectIngressStore } from '@/storage/object-ingress-store'
 import type { ObjectRef } from '@/storage/object-ref'
 
 type SnapshotDocument = Record<string, unknown> & { id: number | string }
@@ -56,7 +56,7 @@ type ImportInput = Readonly<{
   correlationId: string
   dryRun?: boolean
   /** Optional durable private store used by real Payload source writes. */
-  rawEvidenceStore?: LocalObjectStore
+  rawEvidenceStore?: ObjectIngressStore
 }>
 
 type NormalizedPost = Readonly<{
@@ -449,7 +449,7 @@ type SnapshotEvidenceFile = Readonly<{
  * evidence. Files larger than the ObjectRef limit are chunked; the index is
  * the durable reconstruction map and is what the workflow run references.
  */
-const persistSnapshotEvidence = async (input: Readonly<{ snapshotDir: string; filenames: readonly string[]; manifestHash: string; store: LocalObjectStore }>): Promise<ObjectRef> => {
+const persistSnapshotEvidence = async (input: Readonly<{ snapshotDir: string; filenames: readonly string[]; manifestHash: string; store: ObjectIngressStore }>): Promise<ObjectRef> => {
   const files: SnapshotEvidenceFile[] = []
   for (const filename of input.filenames) {
     const chunks: ObjectRef[] = []

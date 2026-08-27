@@ -104,6 +104,7 @@
     "test:int": "cross-env NODE_OPTIONS=--no-deprecation tsx scripts/run-with-postgres.ts node_modules/vitest/vitest.mjs run --config ./vitest.config.mts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1118.0",
     "@opennextjs/cloudflare": "1.20.1",
     "@payloadcms/db-d1-sqlite": "3.88.0",
     "@payloadcms/db-postgres": "3.88.0",

@@ -14,11 +14,28 @@ const requiredMigrationEnvironment = (environment: ManagedPayloadEnvironment): R
   PAYLOAD_SECRET: requiredValue(environment, 'PAYLOAD_SECRET'),
 })
 
-const requiredWriteEnvironment = (environment: ManagedPayloadEnvironment): Readonly<Record<'DATABASE_URL' | 'PAYLOAD_SECRET' | 'RAW_EVIDENCE_STORE_DIR' | 'RAW_EVIDENCE_SIGNER_SECRET', string>> => Object.freeze({
-  ...requiredMigrationEnvironment(environment),
-  RAW_EVIDENCE_STORE_DIR: requiredValue(environment, 'RAW_EVIDENCE_STORE_DIR'),
-  RAW_EVIDENCE_SIGNER_SECRET: requiredValue(environment, 'RAW_EVIDENCE_SIGNER_SECRET'),
-})
+const localEvidenceKeys = ['RAW_EVIDENCE_STORE_DIR', 'RAW_EVIDENCE_SIGNER_SECRET'] as const
+const r2EvidenceKeys = [
+  'RAW_EVIDENCE_R2_ACCESS_KEY_ID',
+  'RAW_EVIDENCE_R2_SECRET_ACCESS_KEY',
+  'RAW_EVIDENCE_R2_ENDPOINT',
+  'RAW_EVIDENCE_R2_BUCKET',
+  'RAW_EVIDENCE_R2_REGION',
+] as const
+
+const configured = (environment: ManagedPayloadEnvironment, keys: readonly string[]): boolean =>
+  keys.some((key) => environment[key]?.trim().length)
+
+const requiredWriteEnvironment = (environment: ManagedPayloadEnvironment): Readonly<Record<string, string>> => {
+  const localConfigured = configured(environment, localEvidenceKeys)
+  const r2Configured = configured(environment, r2EvidenceKeys)
+  if (localConfigured && r2Configured) throw new Error('raw evidence storage configuration is ambiguous: configure either local or R2 storage')
+  const storageKeys = r2Configured ? r2EvidenceKeys : localEvidenceKeys
+  return Object.freeze({
+    ...requiredMigrationEnvironment(environment),
+    ...Object.fromEntries(storageKeys.map((key) => [key, requiredValue(environment, key)])),
+  })
+}
 
 const restore = (key: string, previous: string | undefined): void => {
   if (previous === undefined) delete process.env[key]
