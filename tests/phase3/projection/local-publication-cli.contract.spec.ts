@@ -53,4 +53,24 @@ describe('local projection publication command', () => {
       { id: '00000000-0000-4000-8000-000000000301', kind: 'model', stableKey: 'model:higgsfield', label: 'Higgsfield', promotionState: 'reviewed' },
     ])
   })
+
+  it('preserves an absent outcome type as unresolved instead of fabricating image evidence', async () => {
+    const [artifact] = await artifactsFromPayload({
+      async find() {
+        return { docs: [{
+          stable_id: '00000000-0000-4000-8000-000000000111',
+          canonical_label: 'Outcome is absent',
+          prompt: { original_text: 'Only source-backed prompt text.' },
+          outcome: {},
+          source: {
+            stable_id: '00000000-0000-4000-8000-000000000211',
+            source_version: `sha256:v1:${'b'.repeat(64)}`,
+            captured_at: '2026-08-26T00:00:00.000Z',
+          },
+        }] }
+      },
+    } as never, 'en')
+
+    expect(artifact?.mediaType).toBe('unresolved')
+  })
 })

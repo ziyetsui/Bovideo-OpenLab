@@ -68,7 +68,6 @@ describe('local internal projection publication', () => {
     const firstHubCard = projections.find((projection) => projection.family === 'hub')?.slots.find((slot) => slot.slot_key === 'featured')?.items[0]
     expect(firstHubCard).toMatchObject({
       tags: expect.arrayContaining([
-        expect.objectContaining({ node_ref: 'output:image', link_policy: 'filter_state', target_indexability: 'noindex' }),
         expect.objectContaining({ node_ref: 'model:higgsfield', link_policy: 'filter_state', target_indexability: 'noindex' }),
         expect.objectContaining({ node_ref: 'use_case:product-showcase', link_policy: 'filter_state', target_indexability: 'noindex' }),
       ]),
@@ -97,6 +96,35 @@ describe('local internal projection publication', () => {
     expect(new Set(result.map((projection) => projection.page.route)).size).toBe(result.length)
   })
 
+  it('partitions galleries into canonically bound page projections so every card remains discoverable', () => {
+    const artifacts = Array.from({ length: 101 }, (_, index) => artifact(
+      `00000000-0000-4000-8000-${String(index + 500).padStart(12, '0')}`,
+      `00000000-0000-4000-8000-${String(index + 700).padStart(12, '0')}`,
+      `Image ${index}.`,
+    ))
+    const galleries = buildInternalNoindexProjections({ locale: 'en', publishVersion: 3, artifacts })
+      .filter((projection) => projection.family === 'gallery')
+    const first = galleries.find((projection) => projection.page.route === '/en/prompts/image')!
+    const second = galleries.find((projection) => projection.page.route === '/en/prompts/image/page/2')!
+
+    expect(galleries).toHaveLength(2)
+    expect(first.page.page_type === 'gallery' && first.page.page_size).toBe(100)
+    expect(first.slots.find((slot) => slot.slot_key === 'featured')?.items).toHaveLength(100)
+    expect(first.page.page_type === 'gallery' && first.page.next_page).toBe('/en/prompts/image/page/2')
+    expect(second.page.page_type === 'gallery' && second.page.page).toBe(2)
+    expect(second.slots.find((slot) => slot.slot_key === 'featured')?.items).toHaveLength(1)
+    expect(second.page.page_type === 'gallery' && second.page.previous_page).toBe('/en/prompts/image')
+  })
+
+  it('never materializes output nodes without a reviewed taxonomy relationship', () => {
+    const hub = buildInternalNoindexProjections({ locale: 'en', publishVersion: 4, artifacts: [
+      artifact('00000000-0000-4000-8000-000000000104', '00000000-0000-4000-8000-000000000204', 'No taxonomy.'),
+    ] }).find((projection) => projection.family === 'hub')!
+
+    expect(hub.slots.find((slot) => slot.slot_key === 'outputs')?.items).toEqual([])
+    expect(JSON.stringify(hub)).not.toContain('output:image')
+  })
+
   it('accepts released projection bytes only through the internal publication capability', () => {
     const projection = projections[0]!
     const data = {
@@ -120,8 +148,10 @@ describe('local internal projection publication', () => {
   })
 
   it('keeps the private capability request extensible for Payload local request fields', () => {
-    const request = createInternalProjectionPublicationRequest({ correlationId: '00000000-0000-4000-8000-000000000302' }) as { locale?: string }
+    const service = { stable_id: '00000000-0000-4000-8000-000000000303', identity_kind: 'service' }
+    const request = createInternalProjectionPublicationRequest({ correlationId: '00000000-0000-4000-8000-000000000302', user: service }) as { locale?: string; user?: unknown }
     expect(() => { request.locale = 'en' }).not.toThrow()
+    expect(request.user).toBe(service)
   })
 
   it('resolves only the projection bound by active version, route, locale and family', async () => {

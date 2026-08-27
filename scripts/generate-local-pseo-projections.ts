@@ -100,7 +100,7 @@ export const artifactsFromPayload = async (payload: PayloadLocalAPI, locale: App
       sourceVersion,
       title,
       text: originalText,
-      mediaType: mediaType === 'video' || mediaType === 'unresolved' ? mediaType : 'image',
+      mediaType: mediaType === 'image' || mediaType === 'video' ? mediaType : 'unresolved',
       observedAt,
       canonicalURL: typeof source.canonical_url === 'string' ? source.canonical_url : undefined,
       entityRefs: entityRefsFromPayloadDocument(document),
@@ -205,11 +205,11 @@ export const publishLocalPseoProjections = async (input: LocalProjectionPublishA
     const publishVersion = await nextPublishVersion(payload)
     const projections = buildInternalNoindexProjections({ locale: input.locale, publishVersion, artifacts })
     const projectionVersion = hash(projections.map((projection) => projection.projection_id).join('|'))
-    const publicationRequest = createInternalProjectionPublicationRequest({ correlationId: randomUUID() })
+    const publicationRequest = createInternalProjectionPublicationRequest({ correlationId: randomUUID(), user: authorities.publishService })
     const persisted: PayloadDocument[] = []
     for (const projection of projections) {
       const workflow = await payload.create({
-        collection: 'workflow-runs', overrideAccess: true,
+        collection: 'workflow-runs', overrideAccess: true, req: publicationRequest,
         data: { source_version: projection.dependency_hash, job_type: 'project_page', idempotency_key: `local-projection:${publishVersion}:${projection.projection_id}`, attempt: 0, input_ref: `private/local-internal/input/${projection.projection_id}`, output_ref: null, error_class: null },
       })
       const stored = await payload.create({
@@ -232,7 +232,7 @@ export const publishLocalPseoProjections = async (input: LocalProjectionPublishA
       await payload.create({ collection: 'publication-projections', overrideAccess: true, req: publicationRequest, data: { ...binding, projection: stored.id } })
     }
     await payload.create({
-      collection: 'publication-snapshots', overrideAccess: true,
+      collection: 'publication-snapshots', overrideAccess: true, req: publicationRequest,
       data: {
         source_version: projectionVersion, publish_version: publishVersion,
         route_manifest_ref: `private/local-internal/routes/${publishVersion}`,

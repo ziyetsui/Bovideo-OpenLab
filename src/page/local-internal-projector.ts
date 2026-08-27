@@ -5,6 +5,7 @@ import { pageProjectionSchema, type PageProjection, type ProjectedNodeItem, type
 
 const RENDERER_VERSION = 'local-internal-projector-v1'
 const schemaHash = `sha256:v1:${createHash('sha256').update('page-projection-schema-v1').digest('hex')}`
+const GALLERY_PAGE_SIZE = 100
 
 export type ImportedProjectionArtifact = Readonly<{
   id: string
@@ -68,22 +69,9 @@ const taxonomyNode = (entity: ImportedProjectionEntity, locale: ApplicationLocal
   target_indexability: 'noindex',
 })
 
-const outputNode = (mediaType: ImportedProjectionArtifact['mediaType'], locale: ApplicationLocale): ProjectedNodeItem => ({
-  node_ref: `output:${mediaType}`,
-  edge_ref: null,
-  evidence_state: 'reviewed',
-  link_policy: 'filter_state',
-  href: `/${locale}/prompts?output=${mediaType}`,
-  render_target: 'filter',
-  target_indexability: 'noindex',
-})
-
 const uniqueNodes = (nodes: readonly ProjectedNodeItem[]): readonly ProjectedNodeItem[] => Object.freeze(
   [...new Map(nodes.map((node) => [node.node_ref, node])).values()].sort((left, right) => left.node_ref.localeCompare(right.node_ref, 'en-US')),
 )
-
-const outputNodesFor = (artifacts: readonly ImportedProjectionArtifact[], locale: ApplicationLocale): readonly ProjectedNodeItem[] =>
-  uniqueNodes(artifacts.map((artifact) => outputNode(artifact.mediaType, locale)))
 
 const taxonomyNodesFor = (artifacts: readonly ImportedProjectionArtifact[], locale: ApplicationLocale, kinds: readonly ImportedProjectionEntity['kind'][]): readonly ProjectedNodeItem[] =>
   uniqueNodes(artifacts.flatMap((artifact) =>
@@ -95,10 +83,7 @@ const card = (artifact: ImportedProjectionArtifact, locale: ApplicationLocale): 
     prompt_ref: { type: 'artifact', id: artifact.id },
     title: artifact.title,
     summary: artifact.text.slice(0, 240),
-    tags: [
-      outputNode(artifact.mediaType, locale),
-      ...reviewedEntityRefs(artifact).map((entity) => taxonomyNode(entity, locale)),
-    ],
+    tags: reviewedEntityRefs(artifact).map((entity) => taxonomyNode(entity, locale)),
     evidence_state: 'reviewed',
     link_policy: 'filter_state',
     href: `/${locale}/prompts/${slug(artifact.title)}-${routeID}`,
@@ -267,7 +252,7 @@ export const buildInternalNoindexProjections = (input: InternalProjectionInput):
     promptSlot('styles', styleArtifacts, input.locale),
     emptySlot('collections'),
     emptySlot('creators'),
-    nodeSlot('outputs', outputNodesFor(artifacts, input.locale)),
+    emptySlot('outputs'),
     nodeSlot('use_cases', taxonomyNodesFor(artifacts, input.locale, ['use_case'])),
     emptySlot('techniques'),
   ])]
@@ -275,30 +260,35 @@ export const buildInternalNoindexProjections = (input: InternalProjectionInput):
   for (const mediaType of ['image', 'video'] as const) {
     const galleryArtifacts = artifacts.filter((artifact) => artifact.mediaType === mediaType)
     if (galleryArtifacts.length === 0) continue
-    const galleryRoute = `/${input.locale}/prompts/${mediaType}`
-    const galleryID = stable(`gallery:${mediaType}:${input.locale}`)
-    const galleryPageSize = Math.min(100, galleryArtifacts.length)
-    const gallery = {
-      ...base(input, galleryID, galleryRoute, `${mediaType === 'image' ? 'Image' : 'Video'} Prompt Gallery`, `${galleryArtifacts.length} internal ${mediaType} prompt cards.`, [...new Set(galleryArtifacts.map((artifact) => artifact.sourceID))], galleryArtifacts.map((artifact) => artifact.observedAt).sort().at(-1)!),
-      page_type: 'gallery' as const,
-      media_type: mediaType,
-      page: 1,
-      page_size: galleryPageSize,
-      total_items: galleryArtifacts.length,
-      filter_state: { output: mediaType },
-      next_page: null,
-      previous_page: null,
+    const galleryBaseRoute = `/${input.locale}/prompts/${mediaType}`
+    const totalPages = Math.ceil(galleryArtifacts.length / GALLERY_PAGE_SIZE)
+    const routeForPage = (page: number): string => page === 1 ? galleryBaseRoute : `${galleryBaseRoute}/page/${page}`
+    for (let page = 1; page <= totalPages; page += 1) {
+      const pageArtifacts = galleryArtifacts.slice((page - 1) * GALLERY_PAGE_SIZE, page * GALLERY_PAGE_SIZE)
+      const galleryRoute = routeForPage(page)
+      const galleryID = stable(`gallery:${mediaType}:${input.locale}:${page}`)
+      const gallery = {
+        ...base(input, galleryID, galleryRoute, `${mediaType === 'image' ? 'Image' : 'Video'} Prompt Gallery`, `${galleryArtifacts.length} internal ${mediaType} prompt cards.`, [...new Set(pageArtifacts.map((artifact) => artifact.sourceID))], pageArtifacts.map((artifact) => artifact.observedAt).sort().at(-1)!),
+        page_type: 'gallery' as const,
+        media_type: mediaType,
+        page,
+        page_size: pageArtifacts.length,
+        total_items: galleryArtifacts.length,
+        filter_state: { output: mediaType },
+        next_page: page < totalPages ? routeForPage(page + 1) : null,
+        previous_page: page > 1 ? routeForPage(page - 1) : null,
+      }
+      projections.push(projection(input, 'gallery', gallery, [
+        nodeSlot('use_cases', taxonomyNodesFor(pageArtifacts, input.locale, ['use_case'])),
+        nodeSlot('styles', taxonomyNodesFor(pageArtifacts, input.locale, ['style'])),
+        emptySlot('subjects'),
+        promptSlot('featured', pageArtifacts, input.locale, GALLERY_PAGE_SIZE),
+        promptSlot('models', artifactsForEntityKind(pageArtifacts, 'model'), input.locale, GALLERY_PAGE_SIZE),
+        emptySlot('subject_band'),
+        emptySlot('residual'),
+        emptySlot('related'),
+      ]))
     }
-    projections.push(projection(input, 'gallery', gallery, [
-      nodeSlot('use_cases', taxonomyNodesFor(galleryArtifacts, input.locale, ['use_case'])),
-      nodeSlot('styles', taxonomyNodesFor(galleryArtifacts, input.locale, ['style'])),
-      emptySlot('subjects'),
-      promptSlot('featured', galleryArtifacts, input.locale, galleryPageSize),
-      promptSlot('models', artifactsForEntityKind(galleryArtifacts, 'model'), input.locale, galleryPageSize),
-      emptySlot('subject_band'),
-      emptySlot('residual'),
-      emptySlot('related'),
-    ]))
   }
 
   for (const group of groupedEntities(artifacts)) {

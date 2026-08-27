@@ -6,7 +6,9 @@ import { resolveFrontendRoute } from '../../../frontend/routes/resolve-active-pr
 const ROUTES = [
   'src/app/(frontend)/[locale]/prompts/page.tsx',
   'src/app/(frontend)/[locale]/prompts/image/page.tsx',
+  'src/app/(frontend)/[locale]/prompts/image/page/[page]/page.tsx',
   'src/app/(frontend)/[locale]/prompts/video/page.tsx',
+  'src/app/(frontend)/[locale]/prompts/video/page/[page]/page.tsx',
   'src/app/(frontend)/[locale]/prompts/models/[entitySlug]/page.tsx',
   'src/app/(frontend)/[locale]/prompts/use-cases/[entitySlug]/page.tsx',
   'src/app/(frontend)/[locale]/prompts/styles/[entitySlug]/page.tsx',
